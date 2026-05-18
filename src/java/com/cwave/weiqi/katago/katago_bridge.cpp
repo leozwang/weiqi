@@ -135,8 +135,9 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv *env, jobject thiz, jstring
 
         LOGI("Step: Overriding log and data settings...");
         cfg.overrideKey("logDir", "/dev/null");
-        cfg.overrideKey("logAllGTPCommunication", "false");
-        cfg.overrideKey("logSearchInfo", "false");
+        cfg.overrideKey("logAllGTPCommunication", "true");
+        cfg.overrideKey("logSearchInfo", "true");
+        cfg.overrideKey("logToStderr", "true");
 
         // Use the same directory as the config for OpenCL tuning data
         std::string internalDir = configPath.substr(0, configPath.find_last_of("/"));
@@ -220,9 +221,17 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
         else return env->NewStringUTF("? invalid color");
 
+        LOGI("Starting AI search (genmove) for %s...", colorStr.c_str());
+        auto startTime = std::chrono::steady_clock::now();
+        
         TimeControls tc;
         Loc moveLoc = bot->genMoveSynchronous(pla, tc);
+        
+        auto endTime = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
         std::string moveStr = Location::toString(moveLoc, bot->getRootBoard());
+        LOGI("AI search completed in %lld ms. Move: %s", duration, moveStr.c_str());
 
         bot->makeMove(moveLoc, pla);
         return env->NewStringUTF(("= " + moveStr).c_str());

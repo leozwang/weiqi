@@ -84,12 +84,37 @@ class GameFragment : Fragment() {
         val scope = rememberCoroutineScope()
         var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
         var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        var lastMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
         var analysis by remember { mutableStateOf(AnalysisResult()) }
         var showAnalysis by remember { mutableStateOf(false) }
         var isEngineInitialized by remember { mutableStateOf(false) }
         var statusText by remember { mutableStateOf("Initializing engine...") }
         var lastMoveText by remember { mutableStateOf("No moves yet") }
         var isThinking by remember { mutableStateOf(false) }
+
+        val context = requireContext()
+        val soundPool = remember {
+            android.media.SoundPool.Builder()
+                .setMaxStreams(1)
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .build()
+        }
+        val soundId = remember { mutableStateOf<Int?>(null) }
+        
+        LaunchedEffect(Unit) {
+            soundId.value = soundPool.load(context, R.raw.place_stone, 1)
+        }
+
+        fun playMoveSound() {
+            soundId.value?.let { id ->
+                soundPool.play(id, 1f, 1f, 0, 0, 1f)
+            }
+        }
 
         LaunchedEffect(Unit) {
             statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
@@ -373,6 +398,16 @@ class GameFragment : Fragment() {
                                                 style = Stroke(width = 0.5.dp.toPx())
                                             )
                                         }
+
+                                        // Mark Last Move
+                                        if (lastMove?.first == col && lastMove?.second == row) {
+                                            drawCircle(
+                                                color = if (stone == Stone.BLACK) Color.White else Color.Black,
+                                                radius = 4.dp.toPx(),
+                                                center = Offset(centerX, centerY),
+                                                style = Stroke(width = 1.5.dp.toPx())
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -409,6 +444,7 @@ class GameFragment : Fragment() {
                                 bridge.sendGtpCommand("clear_board")
                                 boardState = Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
                                 previewMove = null
+                                lastMove = null
                                 analysis = AnalysisResult()
                                 statusText = "Board cleared. Your move."
                                 lastMoveText = "No moves yet"
@@ -437,6 +473,8 @@ class GameFragment : Fragment() {
                                         boardState = newBoard
                                         lastMoveText = "Black played $moveStr"
                                         previewMove = null
+                                        lastMove = x to y
+                                        playMoveSound()
                                         
                                         // AI Move
                                         scope.launch {
@@ -448,6 +486,8 @@ class GameFragment : Fragment() {
                                                     val aiBoard = Array(boardSize) { r -> boardState[r].copyOf() }
                                                     aiBoard[aiY][aiX] = Stone.WHITE
                                                     boardState = aiBoard
+                                                    lastMove = aiX to aiY
+                                                    playMoveSound()
                                                     lastMoveText = "White (AI) played $aiMoveStr"
                                                     statusText = "Your turn (Black)."
                                                 } else {
@@ -483,7 +523,7 @@ class GameFragment : Fragment() {
     private suspend fun initEngine(): Int = withContext(Dispatchers.IO) {
         try {
             val configPath = copyAssetToFile("gtp.cfg")
-            val modelPath = copyAssetToFile("g170-b30c320x2-s4824661760-d1229536699.bin.gz")
+            val modelPath = copyAssetToFile("model.bin.gz")
             if (configPath == null || modelPath == null) {
                 Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
                 return@withContext -4

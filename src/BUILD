@@ -104,16 +104,42 @@ android_binary(
     ],
 )
 
-android_binary(
+genrule(
     name = "release",
-    custom_package = "com.cwave.weiqi",
+    srcs = [
+        ":app.apk",
+        "keystore/release.keystore",
+    ],
+    outs = ["release.apk"],
+    cmd = "$(location sign.sh) $(location :app.apk) $(location keystore/release.keystore) $@ $(location @androidsdk//:apksigner) $(location @androidsdk//:zipalign_binary)",
+    tools = [
+        "sign.sh",
+        "@androidsdk//:apksigner",
+        "@androidsdk//:zipalign_binary",
+    ],
+)
+
+android_application(
+    name = "app_bundle",
+    bundle_config_file = "config.pb.json",
     manifest = "AndroidManifest.xml",
     manifest_values = {
         "applicationId": "com.cwave.weiqi",
     },
     nocompress_extensions = [".so"],
     deps = [
-         ":lib",
-         "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
+        ":lib",
+        "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
     ],
+)
+
+genrule(
+    name = "release_bundle",
+    srcs = [
+        ":app_bundle_unsigned.aab",
+        "keystore/release.keystore",
+    ],
+    outs = ["release.aab"],
+    cmd = "$(location sign_bundle.sh) $(location :app_bundle_unsigned.aab) $(location keystore/release.keystore) $@",
+    tools = ["sign_bundle.sh"],
 )

@@ -11,4 +11,4 @@ if [ ! -f "$jarsigner_path" ]; then
 fi
 
 cp "$unsigned_bundle" "$output_bundle"
-"$jarsigner_path" -keystore "$keystore" -storepass new_password -keypass new_password "$output_bundle" wukong-release
+"$jarsigner_path" -keystore "$keystore" -storepass new_password -keypass new_password "$output_bundle" weiqi-release
