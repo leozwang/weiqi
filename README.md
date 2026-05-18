@@ -1,5 +1,24 @@
 # weiqi
 
+## Build and Run
+
+To clone the repository and initialize submodules:
+```bash
+gh repo clone leozwang/weiqi
+cd weiqi
+git submodule update --init --recursive
+```
+
+To build and install the application:
+```bash
+bazel build -c opt --config=android_arm64-v8a //src:release && adb install -r bazel-bin/src/release.apk
+```
+
+To launch the application:
+```bash
+adb shell am start -n com.cwave.weiqi/com.cwave.weiqi.MainActivity
+```
+
 ## Knowledge
 
 ### **The Go Text Protocol**
