@@ -1,0 +1,182 @@
+#include <jni.h>
+#include <string>
+#include <vector>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <iostream>
+#include <sstream>
+#include <android/log.h>
+#include <sys/stat.h>
+#include <fstream>
+
+// KataGo includes
+#include "core/global.h"
+#include "core/mainargs.h"
+#include "core/config_parser.h"
+#include "program/setup.h"
+#include "program/gtpconfig.h"
+#include "search/asyncbot.h"
+#include "program/play.h"
+#include "main.h"
+
+#define TAG "KataGoBridge"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// Global state for the engine
+namespace {
+    std::mutex engineMutex;
+    std::unique_ptr<AsyncBot> bot;
+    NNEvaluator* g_nnEval = nullptr;
+    std::unique_ptr<Logger> logger;
+    std::unique_ptr<Rand> seedRand;
+    bool initialized = false;
+
+    void oneTimeInit() {
+        static std::once_flag flag;
+        std::call_once(flag, []() {
+            LOGI("Step: Board::initHash()");
+            Board::initHash();
+            LOGI("Step: ScoreValue::initTables()");
+            ScoreValue::initTables();
+        });
+    }
+
+    bool fileExists(const std::string& name) {
+        struct stat buffer;
+        return (stat(name.c_str(), &buffer) == 0);
+    }
+    
+    long getFileSize(const std::string& name) {
+        struct stat buffer;
+        if (stat(name.c_str(), &buffer) == 0) return buffer.st_size;
+        return -1;
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring config_path, jstring model_path) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (initialized) return 0;
+
+    LOGI("--- Engine Initialization Start ---");
+    oneTimeInit();
+
+    const char* cConfigPath = env->GetStringUTFChars(config_path, nullptr);
+    const char* cModelPath = env->GetStringUTFChars(model_path, nullptr);
+
+    std::string configPath(cConfigPath);
+    std::string modelPath(cModelPath);
+
+    LOGI("Config path: %s (Size: %ld)", configPath.c_str(), getFileSize(configPath));
+    LOGI("Model path: %s (Size: %ld)", modelPath.c_str(), getFileSize(modelPath));
+
+    if (!fileExists(configPath)) {
+        LOGE("Error: Config file not found!");
+        env->ReleaseStringUTFChars(config_path, cConfigPath);
+        env->ReleaseStringUTFChars(model_path, cModelPath);
+        return -1;
+    }
+    if (!fileExists(modelPath)) {
+        LOGE("Error: Model file not found!");
+        env->ReleaseStringUTFChars(config_path, cConfigPath);
+        env->ReleaseStringUTFChars(model_path, cModelPath);
+        return -2;
+    }
+
+    try {
+        LOGI("Step: Parsing config file with key overrides enabled...");
+        ConfigParser cfg(configPath, true);
+        
+        LOGI("Step: Overriding log settings...");
+        cfg.overrideKey("logDir", "/dev/null");
+        cfg.overrideKey("logAllGTPCommunication", "false");
+        cfg.overrideKey("logSearchInfo", "false");
+        
+        LOGI("Step: Setup::initializeSession()");
+        Setup::initializeSession(cfg);
+        
+        LOGI("Step: Creating Logger and Rand...");
+        logger = std::make_unique<Logger>(&cfg);
+        seedRand = std::make_unique<Rand>();
+
+        std::string expectedSha256 = "";
+        
+        LOGI("Step: Setup::loadSingleParams()");
+        SearchParams params = Setup::loadSingleParams(cfg, Setup::SETUP_FOR_GTP);
+        
+        int expectedConcurrentEvals = params.numThreads;
+        int defaultMaxBatchSize = std::max(8, ((expectedConcurrentEvals + 3) / 4) * 4);
+        
+        LOGI("Step: Setup::initializeNNEvaluator() - threads=%d, batch=%d", expectedConcurrentEvals, defaultMaxBatchSize);
+        g_nnEval = Setup::initializeNNEvaluator(
+            modelPath, modelPath, expectedSha256, cfg, *logger, *seedRand, 
+            expectedConcurrentEvals, Board::DEFAULT_LEN, Board::DEFAULT_LEN, 
+            defaultMaxBatchSize, true, false, Setup::SETUP_FOR_GTP
+        );
+
+        LOGI("Step: Setup::loadSingleRules()");
+        Rules rules = Setup::loadSingleRules(cfg, false);
+        
+        std::string searchRandSeed = cfg.contains("searchRandSeed") ? cfg.getString("searchRandSeed") : Global::uint64ToString(seedRand->nextUInt64());
+        
+        LOGI("Step: Creating AsyncBot...");
+        bot = std::make_unique<AsyncBot>(params, g_nnEval, logger.get(), searchRandSeed);
+        
+        LOGI("Step: Initializing bot position...");
+        Board board;
+        Player pla = P_BLACK;
+        BoardHistory hist(board, pla, rules, 0);
+        bot->setPosition(pla, board, hist);
+
+        initialized = true;
+        LOGI("--- Engine Initialization Successful! ---");
+    } catch (const std::exception& e) {
+        LOGE("FATAL Exception during engine init: %s", e.what());
+        initialized = false;
+    } catch (...) {
+        LOGE("FATAL Unknown error during engine init");
+        initialized = false;
+    }
+
+    env->ReleaseStringUTFChars(config_path, cConfigPath);
+    env->ReleaseStringUTFChars(model_path, cModelPath);
+
+    return initialized ? 0 : -3;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thiz, jstring command) {
+    if (!initialized) return env->NewStringUTF("? engine not initialized");
+
+    const char* cCommand = env->GetStringUTFChars(command, nullptr);
+    std::string cmd(cCommand);
+    env->ReleaseStringUTFChars(command, cCommand);
+
+    if (cmd == "name") return env->NewStringUTF("= KataGo");
+    if (cmd == "version") return env->NewStringUTF(Version::getKataGoVersion().c_str());
+    if (cmd == "protocol_version") return env->NewStringUTF("= 2");
+    
+    return env->NewStringUTF("= ok");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (!initialized) return;
+
+    LOGI("Shutting down engine...");
+    bot->stopAndWait();
+    bot.reset();
+    if(g_nnEval != nullptr) {
+        delete g_nnEval;
+        g_nnEval = nullptr;
+    }
+    logger.reset();
+    seedRand.reset();
+    initialized = false;
+    LOGI("Engine shutdown complete.");
+}
