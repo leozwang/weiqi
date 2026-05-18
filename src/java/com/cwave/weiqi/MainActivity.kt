@@ -69,18 +69,24 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }) {
-                    Text("Init Engine")
+                    Text("Init")
                 }
 
                 Button(onClick = {
                     scope.launch {
                         val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("version")
+                            bridge.sendGtpCommand("clear_board")
                         }
-                        logText += "> version\n$response\n"
+                        logText += "> clear_board\n$response\n"
                     }
                 }) {
-                    Text("Get Version")
+                    Text("New Game")
+                }
+
+                Button(onClick = {
+                    logText = "Engine Log:\n"
+                }) {
+                    Text("Clear")
                 }
             }
 
@@ -90,18 +96,34 @@ class MainActivity : ComponentActivity() {
                 Button(onClick = {
                     scope.launch {
                         val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("name")
+                            bridge.sendGtpCommand("version")
                         }
-                        logText += "> name\n$response\n"
+                        logText += "> version\n$response\n"
                     }
                 }) {
-                    Text("Get Name")
+                    Text("Version")
                 }
 
                 Button(onClick = {
-                    logText = "Engine Log:\n"
+                    scope.launch {
+                        val response = withContext(Dispatchers.IO) {
+                            bridge.sendGtpCommand("genmove black")
+                        }
+                        logText += "> genmove black\n$response\n"
+                    }
                 }) {
-                    Text("Clear Log")
+                    Text("Gen Black")
+                }
+
+                Button(onClick = {
+                    scope.launch {
+                        val response = withContext(Dispatchers.IO) {
+                            bridge.sendGtpCommand("genmove white")
+                        }
+                        logText += "> genmove white\n$response\n"
+                    }
+                }) {
+                    Text("Gen White")
                 }
             }
 

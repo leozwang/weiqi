@@ -16,8 +16,11 @@
 #include "core/global.h"
 #include "core/mainargs.h"
 #include "core/config_parser.h"
+#include "game/board.h"
+#include "search/timecontrols.h"
 #include "program/setup.h"
 #include "program/gtpconfig.h"
+#include "program/playutils.h"
 #include "search/asyncbot.h"
 #include "program/play.h"
 #include "main.h"
@@ -49,11 +52,19 @@ namespace {
         struct stat buffer;
         return (stat(name.c_str(), &buffer) == 0);
     }
-    
+
     long getFileSize(const std::string& name) {
         struct stat buffer;
         if (stat(name.c_str(), &buffer) == 0) return buffer.st_size;
         return -1;
+    }
+
+    std::vector<std::string> split(const std::string& s) {
+        std::vector<std::string> result;
+        std::stringstream ss(s);
+        std::string item;
+        while (ss >> item) result.push_back(item);
+        return result;
     }
 }
 
@@ -95,22 +106,22 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring
         cfg.overrideKey("logDir", "/dev/null");
         cfg.overrideKey("logAllGTPCommunication", "false");
         cfg.overrideKey("logSearchInfo", "false");
-        
+
         LOGI("Step: Setup::initializeSession()");
         Setup::initializeSession(cfg);
-        
+
         LOGI("Step: Creating Logger and Rand...");
         logger = std::make_unique<Logger>(&cfg);
         seedRand = std::make_unique<Rand>();
 
         std::string expectedSha256 = "";
-        
+
         LOGI("Step: Setup::loadSingleParams()");
         SearchParams params = Setup::loadSingleParams(cfg, Setup::SETUP_FOR_GTP);
-        
+
         int expectedConcurrentEvals = params.numThreads;
         int defaultMaxBatchSize = std::max(8, ((expectedConcurrentEvals + 3) / 4) * 4);
-        
+
         LOGI("Step: Setup::initializeNNEvaluator() - threads=%d, batch=%d", expectedConcurrentEvals, defaultMaxBatchSize);
         g_nnEval = Setup::initializeNNEvaluator(
             modelPath, modelPath, expectedSha256, cfg, *logger, *seedRand, 
@@ -120,12 +131,12 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring
 
         LOGI("Step: Setup::loadSingleRules()");
         Rules rules = Setup::loadSingleRules(cfg, false);
-        
+
         std::string searchRandSeed = cfg.contains("searchRandSeed") ? cfg.getString("searchRandSeed") : Global::uint64ToString(seedRand->nextUInt64());
-        
+
         LOGI("Step: Creating AsyncBot...");
         bot = std::make_unique<AsyncBot>(params, g_nnEval, logger.get(), searchRandSeed);
-        
+
         LOGI("Step: Initializing bot position...");
         Board board;
         Player pla = P_BLACK;
@@ -150,16 +161,67 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thiz, jstring command) {
+    std::lock_guard<std::mutex> lock(engineMutex);
     if (!initialized) return env->NewStringUTF("? engine not initialized");
 
     const char* cCommand = env->GetStringUTFChars(command, nullptr);
     std::string cmd(cCommand);
     env->ReleaseStringUTFChars(command, cCommand);
 
-    if (cmd == "name") return env->NewStringUTF("= KataGo");
-    if (cmd == "version") return env->NewStringUTF(Version::getKataGoVersion().c_str());
-    if (cmd == "protocol_version") return env->NewStringUTF("= 2");
-    
+    std::vector<std::string> parts = split(cmd);
+    if (parts.empty()) return env->NewStringUTF("= ");
+
+    std::string mainCmd = parts[0];
+
+    if (mainCmd == "name") return env->NewStringUTF("= KataGo");
+    if (mainCmd == "version") return env->NewStringUTF(Version::getKataGoVersion().c_str());
+    if (mainCmd == "protocol_version") return env->NewStringUTF("= 2");
+
+    if (mainCmd == "genmove") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing color");
+        std::string colorStr = parts[1];
+        Player pla;
+        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
+        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
+        else return env->NewStringUTF("? invalid color");
+
+        TimeControls tc;
+        Loc moveLoc = bot->genMoveSynchronous(pla, tc);
+        std::string moveStr = Location::toString(moveLoc, bot->getRootBoard());
+
+        bot->makeMove(moveLoc, pla);
+        return env->NewStringUTF(("= " + moveStr).c_str());
+    }
+
+    if (mainCmd == "play") {
+        if (parts.size() < 3) return env->NewStringUTF("? missing color or move");
+        std::string colorStr = parts[1];
+        std::string moveStr = parts[2];
+        Player pla;
+        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
+        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
+        else return env->NewStringUTF("? invalid color");
+
+        Loc moveLoc = Location::ofString(moveStr, bot->getRootBoard());
+        if (moveLoc == Board::NULL_LOC && moveStr != "pass" && moveStr != "PASS") return env->NewStringUTF("? invalid move");
+
+        if (!bot->makeMove(moveLoc, pla)) {
+            return env->NewStringUTF("? illegal move");
+        }
+        return env->NewStringUTF("= ");
+    }
+
+    if (mainCmd == "clear_board") {
+        Rules rules = bot->getRootHist().rules;
+        int xSize = bot->getRootBoard().x_size;
+        int ySize = bot->getRootBoard().y_size;
+        Board board(xSize, ySize);
+        Player pla = P_BLACK;
+        BoardHistory hist(board, pla, rules, 0);
+        bot->setPosition(pla, board, hist);
+        return env->NewStringUTF("= ");
+    }
+
     return env->NewStringUTF("= ok");
 }
 
