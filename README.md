@@ -43,6 +43,27 @@ The Android application is optimized for high performance using the following te
 3.  **Automatic Tuning:** The first time the engine initializes, it performs autotuning to compile the most efficient GPU kernels for your specific hardware.
 4.  **Multi-threading:** Configured to use 4 search threads (`numSearchThreads = 4`) to maximize GPU utilization without causing thermal throttling.
 
+#### Compiling KataGo for Android (Bazel)
+
+KataGo is integrated as a modular C++ library and cross-compiled for Android using Bazel.
+
+##### **Switching Backends**
+To switch between GPU and CPU backends, modify `KataGo/BUILD.bazel`:
+
+*   **For OpenCL (GPU):**
+    *   Set `defines = ["USE_OPENCL_BACKEND", ...]`
+    *   Ensure `:opencl` is in `deps`.
+*   **For Eigen (CPU):**
+    *   Set `defines = ["USE_EIGEN_BACKEND", ...]`
+    *   Remove `:opencl` from `deps`.
+    *   Add `cpp/neuralnet/opencl*.cpp` to the `exclude` list in `srcs`.
+
+##### **Build Command**
+The entire Android app (including the engine) is built with:
+```bash
+bazel build -c opt --config=android_arm64-v8a //src:release
+```
+
 #### Run
 
 To run the engine locally on MacOS:
