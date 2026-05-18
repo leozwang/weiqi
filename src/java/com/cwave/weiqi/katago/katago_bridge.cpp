@@ -136,9 +136,9 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring
 
         LOGI("Step: Creating AsyncBot...");
         bot = std::make_unique<AsyncBot>(params, g_nnEval, logger.get(), searchRandSeed);
+        bot->setAlwaysIncludeOwnerMap(true);
 
-        LOGI("Step: Initializing bot position...");
-        Board board;
+        LOGI("Step: Initializing bot position...");        Board board;
         Player pla = P_BLACK;
         BoardHistory hist(board, pla, rules, 0);
         bot->setPosition(pla, board, hist);
@@ -220,6 +220,36 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         BoardHistory hist(board, pla, rules, 0);
         bot->setPosition(pla, board, hist);
         return env->NewStringUTF("= ");
+    }
+
+    if (mainCmd == "kata-get-analysis") {
+        nlohmann::json json;
+        // perspective: P_BLACK is usually 1, P_WHITE is 2 in KataGo
+        Player perspective = bot->getRootPla();
+        if (parts.size() >= 2) {
+            std::string pStr = parts[1];
+            if (pStr == "black" || pStr == "b") perspective = P_BLACK;
+            else if (pStr == "white" || pStr == "w") perspective = P_WHITE;
+        }
+
+        bool success = bot->getSearch()->getAnalysisJson(
+            perspective,
+            10,    // analysisPVLen
+            false, // preventEncore
+            true,  // includePolicy
+            true,  // includeOwnership
+            false, // includeOwnershipStdev
+            false, // includeMovesOwnership
+            false, // includeMovesOwnershipStdev
+            true,  // includePVVisits
+            false, // includeNoResultValue
+            json
+        );
+
+        if (!success) return env->NewStringUTF("? failed to get analysis");
+
+        std::string jsonStr = json.dump();
+        return env->NewStringUTF(("= " + jsonStr).c_str());
     }
 
     return env->NewStringUTF("= ok");
