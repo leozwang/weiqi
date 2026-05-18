@@ -83,6 +83,7 @@ kt_android_library(
         "@maven//:androidx_tracing_tracing",
         "@maven//:androidx_savedstate_savedstate",
         "@maven//:androidx_security_security_crypto",
+        "@maven//:com_google_android_material_material",
         "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android",
         "@maven//:com_google_guava_listenablefuture",
         "@maven//:com_anthropic_anthropic_java",

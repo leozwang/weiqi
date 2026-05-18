@@ -1,177 +1,75 @@
 package com.cwave.weiqi
 
-import android.content.Context
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.cwave.weiqi.katago.KataGoBridge
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
+import android.view.View
+import android.view.ViewGroup.MarginLayoutParams
+import android.view.WindowManager.LayoutParams
+import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updateLayoutParams
+import androidx.fragment.app.FragmentContainerView
+import com.google.android.material.color.DynamicColors
 
-class MainActivity : ComponentActivity() {
-    private val bridge = KataGoBridge()
+class MainActivity : AppCompatActivity() {
+    private lateinit var container: FrameLayout
+    private lateinit var fragmentContainer: FragmentContainerView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colors.background
-                ) {
-                    EngineTestScreen(bridge)
-                }
-            }
+        DynamicColors.applyToActivityIfAvailable(this)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        window.addFlags(LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        setContentView(createView())
+        setLayoutEdgeToEdge()
+
+        if (savedInstanceState == null) {
+            supportFragmentManager
+                .beginTransaction()
+                .replace(fragmentContainer.id, SimpleFragment())
+                .commitNow()
         }
     }
 
-    @Composable
-    fun EngineTestScreen(bridge: KataGoBridge) {
-        var logText by remember { mutableStateOf("Engine Log:\n") }
-        val scope = rememberCoroutineScope()
-        val scrollState = rememberScrollState()
-
-        LaunchedEffect(logText) {
-            scrollState.animateScrollTo(scrollState.maxValue)
+    private fun createView(): View {
+        container = FrameLayout(this).apply {
+            id = View.generateViewId()
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         }
 
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxSize()
-        ) {
-            Text(text = "KataGo Android Test", style = MaterialTheme.typography.h5)
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    scope.launch {
-                        logText += "Initializing engine...\n"
-                        val result = initEngine()
-                        logText += when (result) {
-                            0 -> "Engine initialized!\n"
-                            -1 -> "Error: Config file not found.\n"
-                            -2 -> "Error: Model file not found.\n"
-                            -3 -> "Error: Engine internal init failed.\n"
-                            -4 -> "Error: Asset copy failed.\n"
-                            -5 -> "Error: Exception during init.\n"
-                            else -> "Error: Unknown error ($result).\n"
-                        }
-                    }
-                }) {
-                    Text("Init")
-                }
-
-                Button(onClick = {
-                    scope.launch {
-                        val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("clear_board")
-                        }
-                        logText += "> clear_board\n$response\n"
-                    }
-                }) {
-                    Text("New Game")
-                }
-
-                Button(onClick = {
-                    logText = "Engine Log:\n"
-                }) {
-                    Text("Clear")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    scope.launch {
-                        val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("version")
-                        }
-                        logText += "> version\n$response\n"
-                    }
-                }) {
-                    Text("Version")
-                }
-
-                Button(onClick = {
-                    scope.launch {
-                        val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("genmove black")
-                        }
-                        logText += "> genmove black\n$response\n"
-                    }
-                }) {
-                    Text("Gen Black")
-                }
-
-                Button(onClick = {
-                    scope.launch {
-                        val response = withContext(Dispatchers.IO) {
-                            bridge.sendGtpCommand("genmove white")
-                        }
-                        logText += "> genmove white\n$response\n"
-                    }
-                }) {
-                    Text("Gen White")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                color = MaterialTheme.colors.surface,
-                elevation = 2.dp,
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Text(
-                    text = logText,
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .verticalScroll(scrollState),
-                    style = MaterialTheme.typography.body2
-                )
-            }
+        fragmentContainer = FragmentContainerView(this).apply {
+            id = View.generateViewId()
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         }
+
+        container.addView(fragmentContainer)
+        return container
     }
 
-    private suspend fun initEngine(): Int = withContext(Dispatchers.IO) {
-        try {
-            val configPath = copyAssetToFile("gtp.cfg")
-            val modelPath = copyAssetToFile("g170-b30c320x2-s4824661760-d1229536699.bin.gz")
-            
-            if (configPath == null || modelPath == null) return@withContext -4
-
-            bridge.init(configPath, modelPath)
-        } catch (e: Exception) {
-            -5
-        }
-    }
-
-    private fun copyAssetToFile(assetName: String): String? {
-        val file = File(filesDir, assetName)
-        try {
-            assets.open(assetName).use { inputStream ->
-                FileOutputStream(file).use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
+    private fun setLayoutEdgeToEdge() {
+        ViewCompat.setOnApplyWindowInsetsListener(container) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.navigationBars() or
+                WindowInsetsCompat.Type.statusBars() or
+                WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updateLayoutParams<MarginLayoutParams> {
+                leftMargin = insets.left
+                rightMargin = insets.right
+                topMargin = insets.top
+                bottomMargin = insets.bottom
             }
-            return file.absolutePath
-        } catch (e: Exception) {
-            return null
+            WindowInsetsCompat.CONSUMED
         }
     }
 }
