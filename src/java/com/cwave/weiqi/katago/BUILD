@@ -18,7 +18,10 @@ cc_library(
 cc_binary(
     name = "libkatago_jni.so",
     linkshared = 1,
-    deps = [":katago_jni_native"],
+    deps = [
+        ":katago_jni_native",
+        "@katago_repo//:libkatago_opencl.so",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -29,12 +32,19 @@ cc_import(
     visibility = ["//visibility:public"],
 )
 
+cc_import(
+    name = "katago_opencl_import",
+    shared_library = "@katago_repo//:libkatago_opencl.so",
+    visibility = ["//visibility:public"],
+)
+
 android_library(
     name = "katago_bridge_java",
     srcs = ["KataGoBridge.java"],
     custom_package = "com.cwave.weiqi.katago",
     deps = [
         ":katago_jni_import",
+        ":katago_opencl_import",
     ],
     visibility = ["//visibility:public"],
 )

@@ -2,6 +2,10 @@ package com.cwave.weiqi.katago;
 
 public class KataGoBridge {
     static {
+        try {
+            System.loadLibrary("katago_opencl");
+        } catch (UnsatisfiedLinkError e) {
+        }
         System.loadLibrary("katago_jni");
     }
 

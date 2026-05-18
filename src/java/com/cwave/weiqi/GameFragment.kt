@@ -92,6 +92,7 @@ class GameFragment : Fragment() {
         var isThinking by remember { mutableStateOf(false) }
 
         LaunchedEffect(Unit) {
+            statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
             val result = initEngine()
             if (result == 0) {
                 isEngineInitialized = true
@@ -483,24 +484,51 @@ class GameFragment : Fragment() {
         try {
             val configPath = copyAssetToFile("gtp.cfg")
             val modelPath = copyAssetToFile("g170-b30c320x2-s4824661760-d1229536699.bin.gz")
-            if (configPath == null || modelPath == null) return@withContext -4
-            bridge.init(configPath, modelPath)
+            if (configPath == null || modelPath == null) {
+                Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
+                return@withContext -4
+            }
+            
+            Log.i("GameFragment", "Starting KataGo Engine Init...")
+            val result = bridge.init(configPath, modelPath)
+            Log.i("GameFragment", "Engine Init Result: $result")
+            result
         } catch (e: Exception) {
+            Log.e("GameFragment", "Engine Init Exception", e)
             -5
         }
     }
 
     private fun copyAssetToFile(assetName: String): String? {
-        val file = File(requireContext().filesDir, assetName)
+        val destFile = File(requireContext().filesDir, assetName)
+        
+        // If file already exists and has substantial size, skip copying
+        // g170 model is ~200MB, gtp.cfg is ~30KB
+        if (destFile.exists() && destFile.length() > 0) {
+            Log.i("GameFragment", "Asset $assetName already exists, skipping copy.")
+            return destFile.absolutePath
+        }
+
+        val tempFile = File(requireContext().filesDir, "$assetName.tmp")
         try {
+            Log.i("GameFragment", "Extracting asset $assetName to internal storage...")
             requireContext().assets.open(assetName).use { inputStream ->
-                FileOutputStream(file).use { outputStream ->
+                FileOutputStream(tempFile).use { outputStream ->
                     inputStream.copyTo(outputStream)
                 }
             }
-            return file.absolutePath
+            if (tempFile.renameTo(destFile)) {
+                Log.i("GameFragment", "Successfully extracted $assetName")
+                return destFile.absolutePath
+            } else {
+                Log.e("GameFragment", "Failed to rename temp file for $assetName")
+                return null
+            }
         } catch (e: Exception) {
+            Log.e("GameFragment", "Error copying asset $assetName", e)
             return null
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
         }
     }
 

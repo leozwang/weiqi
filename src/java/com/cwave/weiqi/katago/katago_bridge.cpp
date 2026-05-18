@@ -67,12 +67,43 @@ namespace {
         return result;
     }
 }
+#include <pthread.h>
+#include <unistd.h>
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring config_path, jstring model_path) {
+static int pfd[2];
+static pthread_t thr;
+static const char *tag = "KataGoEngine";
+
+static void *thread_func(void*) {
+    ssize_t rdsz;
+    char buf[256];
+    while((rdsz = read(pfd[0], buf, sizeof(buf) - 1)) > 0) {
+        if(buf[rdsz - 1] == '\n') buf[rdsz - 1] = 0;
+        else buf[rdsz] = 0;
+        __android_log_write(ANDROID_LOG_INFO, tag, buf);
+    }
+    return 0;
+}
+
+int start_logger(const char *app_name) {
+    tag = app_name;
+    setvbuf(stdout, 0, _IOLBF, 0);
+    setvbuf(stderr, 0, _IOLBF, 0);
+    pipe(pfd);
+    dup2(pfd[1], 1);
+    dup2(pfd[1], 2);
+    if(pthread_create(&thr, 0, thread_func, 0) == -1) return -1;
+    pthread_detach(thr);
+    return 0;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv *env, jobject thiz, jstring config_path, jstring model_path) {
     std::lock_guard<std::mutex> lock(engineMutex);
     if (initialized) return 0;
 
+    start_logger("KataGoEngine");
     LOGI("--- Engine Initialization Start ---");
     oneTimeInit();
 
@@ -101,14 +132,18 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv* env, jobject thiz, jstring
     try {
         LOGI("Step: Parsing config file with key overrides enabled...");
         ConfigParser cfg(configPath, true);
-        
-        LOGI("Step: Overriding log settings...");
+
+        LOGI("Step: Overriding log and data settings...");
         cfg.overrideKey("logDir", "/dev/null");
         cfg.overrideKey("logAllGTPCommunication", "false");
         cfg.overrideKey("logSearchInfo", "false");
 
-        LOGI("Step: Setup::initializeSession()");
-        Setup::initializeSession(cfg);
+        // Use the same directory as the config for OpenCL tuning data
+        std::string internalDir = configPath.substr(0, configPath.find_last_of("/"));
+        cfg.overrideKey("homeDataDir", internalDir);
+        LOGI("Setting homeDataDir to: %s", internalDir.c_str());
+
+        LOGI("Step: Setup::initializeSession()");        Setup::initializeSession(cfg);
 
         LOGI("Step: Creating Logger and Rand...");
         logger = std::make_unique<Logger>(&cfg);
