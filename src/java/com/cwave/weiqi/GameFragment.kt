@@ -13,6 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.*
@@ -45,6 +47,7 @@ class GameFragment : Fragment() {
   private val boardSize = 19
 
   enum class Stone { EMPTY, BLACK, WHITE }
+  enum class GameMode { USER_BLACK, USER_WHITE, USER_BOTH, AI_BOTH }
 
   data class CandidateMove(
     val x: Int,
@@ -91,6 +94,37 @@ class GameFragment : Fragment() {
     var statusText by remember { mutableStateOf("Initializing engine...") }
     var lastMoveText by remember { mutableStateOf("No moves yet") }
     var isThinking by remember { mutableStateOf(false) }
+    var currentMode by remember { mutableStateOf(GameMode.USER_BLACK) }
+    var currentTurn by remember { mutableStateOf(Stone.BLACK) }
+    var aiAutoPlay by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    // Automatically update analysis when turn changes or analysis is toggled ON
+    LaunchedEffect(currentTurn, showAnalysis) {
+      if (showAnalysis && isEngineInitialized) {
+        val isHumanTurn = when(currentMode) {
+            GameMode.USER_BLACK -> currentTurn == Stone.BLACK
+            GameMode.USER_WHITE -> currentTurn == Stone.WHITE
+            GameMode.USER_BOTH -> true
+            GameMode.AI_BOTH -> false
+        }
+
+        if (isHumanTurn && !isThinking) {
+            val colorStr = if (currentTurn == Stone.WHITE) "white" else "black"
+            withContext(Dispatchers.IO) {
+                // We use a local busy check if needed, but since we are in a LaunchedEffect 
+                // keyed by currentTurn, it won't run multiple times for the same turn.
+                statusText = "Analyzing position..."
+                bridge.sendGtpCommand("think $colorStr 400")
+                statusText = "Your turn."
+            }
+        }
+        
+        if (!isThinking) {
+            analysis = getAnalysis(bridge, currentTurn)
+        }
+      }
+    }
 
     val context = requireContext()
     val soundPool = remember {
@@ -116,14 +150,39 @@ class GameFragment : Fragment() {
       }
     }
 
+    suspend fun handleAiMove(color: Stone) {
+      isThinking = true
+      statusText = "KataGo is thinking..."
+      genAiMove(color, bridge) { aiX, aiY, aiMoveStr ->
+        isThinking = false
+        boardState = syncBoardState(bridge)
+        if (aiX != -1 && aiY != -1) {
+          lastMove = aiX to aiY
+          playMoveSound()
+          val colorStr = if (color == Stone.BLACK) "Black" else "White"
+          lastMoveText = "$colorStr (AI) played $aiMoveStr"
+          currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          statusText = if (currentMode == GameMode.USER_BLACK || currentMode == GameMode.USER_WHITE) "Your turn." else "Next move..."
+        } else if (aiMoveStr == "PASS") {
+          lastMoveText = "AI passed."
+          currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          statusText = "AI passed."
+        } else {
+          statusText = "KataGo error."
+        }
+      }
+    }
+
     LaunchedEffect(Unit) {
       statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
       val result = initEngine()
       if (result == 0) {
         isEngineInitialized = true
-        statusText = "Ready. Your move (Black)."
-        // Initial analysis
-        analysis = getAnalysis(bridge)
+        statusText = "Ready. Black's turn."
+
+        if (currentMode == GameMode.USER_WHITE) {
+          handleAiMove(Stone.BLACK)
+        }
       } else {
         statusText = "Engine Init Failed: $result"
       }
@@ -137,11 +196,57 @@ class GameFragment : Fragment() {
           contentColor = MaterialTheme.colors.onPrimary,
           elevation = 4.dp,
           actions = {
+            Box {
+              IconButton(onClick = { menuExpanded = true }) {
+                Icon(
+                  imageVector = Icons.Default.Settings, // Changed from Visibility to Settings
+                  contentDescription = "Select Mode"
+                )
+              }
+              DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false }
+              ) {
+                GameMode.values().forEach { mode ->
+                  DropdownMenuItem(onClick = {
+                    currentMode = mode
+                    menuExpanded = false
+                    aiAutoPlay = false
+                    // If switching to Mode 2 (User is White) and board is empty, AI starts
+                    if (mode == GameMode.USER_WHITE && boardState.all { row -> row.all { it == Stone.EMPTY } }) {
+                      scope.launch { handleAiMove(Stone.BLACK) }
+                    }
+                  }) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (currentMode == mode) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colors.primary,
+                                modifier = Modifier.size(32.dp).padding(end = 8.dp)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.size(40.dp)) // 32 + 8
+                        }
+                        Text(text = when(mode) {
+                          GameMode.USER_BLACK -> "You are Black"
+                          GameMode.USER_WHITE -> "You are White"
+                          GameMode.USER_BOTH -> "You are Both"
+                          GameMode.AI_BOTH -> "AI vs AI"
+                        })
+                    }
+                  }
+                }
+              }
+            }
             IconButton(onClick = { showAnalysis = !showAnalysis }) {
               Icon(
                 imageVector = if (showAnalysis) Icons.Default.Visibility
                 else Icons.Default.VisibilityOff,
-                  contentDescription = "Toggle AI Analysis"
+                contentDescription = "Toggle AI Analysis"
               )
             }
           }
@@ -446,8 +551,14 @@ class GameFragment : Fragment() {
                     previewMove = null
                     lastMove = null
                     analysis = AnalysisResult()
-                    statusText = "Board cleared. Your move."
+                    currentTurn = Stone.BLACK
+                    statusText = "Board cleared. Black's turn."
                     lastMoveText = "No moves yet"
+                    aiAutoPlay = false
+
+                    if (currentMode == GameMode.USER_WHITE) {
+                      handleAiMove(Stone.BLACK)
+                    }
                   }
                 },
                 modifier = Modifier.height(56.dp),
@@ -460,54 +571,71 @@ class GameFragment : Fragment() {
                 Text("NEW GAME", fontWeight = FontWeight.Bold)
               }
 
-              // Place Button (Circular)
-              Button(
-                onClick = {
-                  val move = previewMove ?: return@Button
-                  val (x, y) = move
-                  scope.launch {
-                    playMove(x, y, Stone.BLACK, bridge) { success, moveStr ->
-                      if (success) {
-                        boardState = syncBoardState(bridge)
-                        lastMoveText = "Black played $moveStr"
-                        previewMove = null
-                        lastMove = x to y
-                        playMoveSound()
+              if (currentMode == GameMode.AI_BOTH) {
+                // Autoplay Toggle for Mode 4
+                Button(
+                  onClick = {
+                    aiAutoPlay = !aiAutoPlay
+                  },
+                  modifier = Modifier.size(80.dp),
+                  shape = CircleShape,
+                  colors = ButtonDefaults.buttonColors(
+                    backgroundColor = if (aiAutoPlay) Color.Red else Color.Green
+                  )
+                ) {
+                  Text(if (aiAutoPlay) "STOP" else "AUTO", fontWeight = FontWeight.Bold)
+                }
 
-                        // AI Move
-                        scope.launch {
-                          isThinking = true
-                          statusText = "KataGo is thinking..."
-                          genAiMove(Stone.WHITE, bridge) { aiX, aiY, aiMoveStr ->
-                            isThinking = false
+                LaunchedEffect(aiAutoPlay, currentTurn) {
+                  if (aiAutoPlay && currentMode == GameMode.AI_BOTH && !isThinking) {
+                    kotlinx.coroutines.delay(1000) // Small delay between AI moves
+                    handleAiMove(currentTurn)
+                  }
+                }
+              } else {
+                // Place Button (Circular)
+                Button(
+                  onClick = {
+                    val move = previewMove ?: return@Button
+                    val (x, y) = move
+                    val turnColor = currentTurn
+                    scope.launch {
+                      playMove(x, y, turnColor, bridge) { success, moveStr ->
+                        if (success) {
                           boardState = syncBoardState(bridge)
-                          if (aiX != -1 && aiY != -1) {
-                            lastMove = aiX to aiY
-                            playMoveSound()
-                            lastMoveText = "White (AI) played $aiMoveStr"
-                            statusText = "Your turn (Black)."
+                          val colorStr = if (turnColor == Stone.BLACK) "Black" else "White"
+                          lastMoveText = "$colorStr played $moveStr"
+                          previewMove = null
+                          lastMove = x to y
+                          playMoveSound()
+                          currentTurn = if (turnColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+
+                          // Trigger AI if necessary
+                          if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
+                            scope.launch { handleAiMove(Stone.WHITE) }
+                          } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
+                            scope.launch { handleAiMove(Stone.BLACK) }
                           } else {
-                            statusText = "KataGo passed or error."
+                            statusText = "Your turn."
                           }
-                          // Get analysis after moves
-                          scope.launch {
-                            analysis = getAnalysis(bridge)
-                          }
-                          }
+                        } else {
+                          statusText = "Illegal move at ${toGtpCoords(x, y)}"
+                          previewMove = null
                         }
-                      } else {
-                        statusText = "Illegal move at ${toGtpCoords(x, y)}"
-                        previewMove = null
                       }
                     }
-                  }
-                },
-                enabled = previewMove != null && !isThinking,
-                modifier = Modifier.size(80.dp),
-                shape = CircleShape,
-                elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
-              ) {
-                Text("PLACE", fontWeight = FontWeight.Bold)
+                  },
+                  enabled = previewMove != null && !isThinking && (
+                    currentMode == GameMode.USER_BOTH ||
+                    (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
+                    (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
+                  ),
+                  modifier = Modifier.size(80.dp),
+                  shape = CircleShape,
+                  elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
+                ) {
+                  Text("PLACE", fontWeight = FontWeight.Bold)
+                }
               }
             }
 
@@ -632,9 +760,11 @@ class GameFragment : Fragment() {
     return newBoard
   }
 
-  private suspend fun getAnalysis(bridge: KataGoBridge): AnalysisResult = withContext(Dispatchers.IO) {
-    // Query analysis from Black's perspective
-    val response = bridge.sendGtpCommand("kata-get-analysis black")
+  private suspend fun getAnalysis(bridge: KataGoBridge, perspective: Stone): AnalysisResult = withContext(Dispatchers.IO) {
+    // Query analysis from specified perspective
+    val colorStr = if (perspective == Stone.WHITE) "white" else "black"
+    Log.i("GameFragment", "Requesting analysis for $colorStr...")
+    val response = bridge.sendGtpCommand("kata-get-analysis $colorStr")
     if (response.startsWith("=")) {
       try {
         val jsonStr = response.substring(1).trim()
@@ -651,7 +781,6 @@ class GameFragment : Fragment() {
 
         val moveInfos = json.getJSONArray("moveInfos")
         val candidates = mutableListOf<CandidateMove>()
-        // Parse top 5 moves with significant visits
         for (i in 0 until moveInfos.length()) {
           val moveInfo = moveInfos.getJSONObject(i)
           val moveStr = moveInfo.getString("move")
@@ -668,15 +797,15 @@ class GameFragment : Fragment() {
           }
         }
 
-        // Sort by visits and keep top 5
         val topCandidates = candidates.sortedByDescending { it.visits }.take(5)
-
+        Log.i("GameFragment", "Analysis received: winrate=$winrate, candidates=${topCandidates.size}")
         AnalysisResult(winrate, scoreLead, ownership, topCandidates)
       } catch (e: Exception) {
-        Log.e("GameFragment", "Error parsing analysis", e)
+        Log.e("GameFragment", "Error parsing analysis: ${e.message}", e)
         AnalysisResult()
       }
     } else {
+      Log.w("GameFragment", "Analysis command failed or returned empty: $response")
       AnalysisResult()
     }
   }

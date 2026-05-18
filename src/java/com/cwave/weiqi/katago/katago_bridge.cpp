@@ -129,52 +129,60 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv *env, jobject thiz, jstring
         return -2;
     }
 
+    int step = 0;
     try {
-        LOGI("Step: Parsing config file with key overrides enabled...");
+        step = 10;
+        LOGI("Step 10: Parsing config file...");
         ConfigParser cfg(configPath, true);
 
-        LOGI("Step: Overriding log and data settings...");
+        LOGI("Step 11: Overriding settings...");
         cfg.overrideKey("logDir", "/dev/null");
         cfg.overrideKey("logAllGTPCommunication", "true");
         cfg.overrideKey("logSearchInfo", "true");
         cfg.overrideKey("logToStderr", "true");
 
-        // Use the same directory as the config for OpenCL tuning data
         std::string internalDir = configPath.substr(0, configPath.find_last_of("/"));
         cfg.overrideKey("homeDataDir", internalDir);
         LOGI("Setting homeDataDir to: %s", internalDir.c_str());
 
-        LOGI("Step: Setup::initializeSession()");        Setup::initializeSession(cfg);
+        step = 12;
+        LOGI("Step 12: Setup::initializeSession()");
+        Setup::initializeSession(cfg);
 
-        LOGI("Step: Creating Logger and Rand...");
+        step = 13;
+        LOGI("Step 13: Creating Logger and Rand...");
         logger = std::make_unique<Logger>(&cfg);
         seedRand = std::make_unique<Rand>();
 
-        std::string expectedSha256 = "";
-
-        LOGI("Step: Setup::loadSingleParams()");
+        step = 14;
+        LOGI("Step 14: Setup::loadSingleParams()");
         SearchParams params = Setup::loadSingleParams(cfg, Setup::SETUP_FOR_GTP);
 
         int expectedConcurrentEvals = params.numThreads;
         int defaultMaxBatchSize = std::max(8, ((expectedConcurrentEvals + 3) / 4) * 4);
 
-        LOGI("Step: Setup::initializeNNEvaluator() - threads=%d, batch=%d", expectedConcurrentEvals, defaultMaxBatchSize);
+        step = 15;
+        LOGI("Step 15: Setup::initializeNNEvaluator() - threads=%d, batch=%d", expectedConcurrentEvals, defaultMaxBatchSize);
+        std::string expectedSha256 = "";
         g_nnEval = Setup::initializeNNEvaluator(
             modelPath, modelPath, expectedSha256, cfg, *logger, *seedRand, 
             expectedConcurrentEvals, Board::DEFAULT_LEN, Board::DEFAULT_LEN, 
             defaultMaxBatchSize, true, false, Setup::SETUP_FOR_GTP
         );
 
-        LOGI("Step: Setup::loadSingleRules()");
+        step = 16;
+        LOGI("Step 16: Setup::loadSingleRules()");
         Rules rules = Setup::loadSingleRules(cfg, false);
 
+        step = 17;
+        LOGI("Step 17: Creating AsyncBot...");
         std::string searchRandSeed = cfg.contains("searchRandSeed") ? cfg.getString("searchRandSeed") : Global::uint64ToString(seedRand->nextUInt64());
-
-        LOGI("Step: Creating AsyncBot...");
         bot = std::make_unique<AsyncBot>(params, g_nnEval, logger.get(), searchRandSeed);
         bot->setAlwaysIncludeOwnerMap(true);
 
-        LOGI("Step: Initializing bot position...");        Board board;
+        step = 18;
+        LOGI("Step 18: Initializing bot position...");
+        Board board;
         Player pla = P_BLACK;
         BoardHistory hist(board, pla, rules, 0);
         bot->setPosition(pla, board, hist);
@@ -182,17 +190,23 @@ Java_com_cwave_weiqi_katago_KataGoBridge_init(JNIEnv *env, jobject thiz, jstring
         initialized = true;
         LOGI("--- Engine Initialization Successful! ---");
     } catch (const std::exception& e) {
-        LOGE("FATAL Exception during engine init: %s", e.what());
+        LOGE("FATAL Exception at step %d: %s", step, e.what());
         initialized = false;
+        env->ReleaseStringUTFChars(config_path, cConfigPath);
+        env->ReleaseStringUTFChars(model_path, cModelPath);
+        return -step;
     } catch (...) {
-        LOGE("FATAL Unknown error during engine init");
+        LOGE("FATAL Unknown error at step %d", step);
         initialized = false;
+        env->ReleaseStringUTFChars(config_path, cConfigPath);
+        env->ReleaseStringUTFChars(model_path, cModelPath);
+        return -step;
     }
 
     env->ReleaseStringUTFChars(config_path, cConfigPath);
     env->ReleaseStringUTFChars(model_path, cModelPath);
 
-    return initialized ? 0 : -3;
+    return 0;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -235,6 +249,37 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
 
         bot->makeMove(moveLoc, pla);
         return env->NewStringUTF(("= " + moveStr).c_str());
+    }
+
+    if (mainCmd == "think") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing color");
+        std::string colorStr = parts[1];
+        Player pla;
+        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
+        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
+        else return env->NewStringUTF("? invalid color");
+
+        int64_t visits = 400;
+        if (parts.size() >= 3) {
+            try {
+                visits = std::stoll(parts[2]);
+            } catch (...) {}
+        }
+
+        LOGI("AI starting thinking search (think) for %s with %ld visits...", colorStr.c_str(), (long)visits);
+        
+        SearchParams oldParams = bot->getParams();
+        SearchParams newParams = oldParams;
+        newParams.maxVisits = visits;
+        newParams.maxPlayouts = visits;
+        
+        // Use setParamsNoClearing to avoid wiping the tree before/after search
+        bot->setParamsNoClearing(newParams);
+        bot->genMoveSynchronous(pla, TimeControls());
+        bot->setParamsNoClearing(oldParams);
+        
+        LOGI("AI thinking search completed.");
+        return env->NewStringUTF("= ok");
     }
 
     if (mainCmd == "play") {

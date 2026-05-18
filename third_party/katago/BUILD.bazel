@@ -2,6 +2,26 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+cc_binary(
+    name = "libkatago_opencl.so",
+    srcs = ["external/opencl/opencl_proxy.cpp"],
+    linkshared = 1,
+    linkopts = ["-ldl"],
+    deps = [":opencl_headers"],
+)
+
+cc_library(
+    name = "opencl_headers",
+    hdrs = glob(["external/opencl/include/CL/CL/*.h"]),
+    includes = ["external/opencl/include/CL"],
+)
+
+cc_library(
+    name = "opencl",
+    srcs = [":libkatago_opencl.so"],
+    deps = [":opencl_headers"],
+)
+
 cc_library(
     name = "katago_lib",
     srcs = glob(
@@ -13,7 +33,6 @@ cc_library(
             "cpp/book/*.cpp",
             "cpp/search/*.cpp",
             "cpp/program/*.cpp",
-            "cpp/command/*.cpp",
         ],
         exclude = [
             "cpp/neuralnet/cudabackend.cpp",
@@ -24,6 +43,7 @@ cc_library(
             "cpp/neuralnet/openclkernels.cpp",
             "cpp/neuralnet/openclhelpers.cpp",
             "cpp/neuralnet/opencltuner.cpp",
+            "cpp/neuralnet/dummybackend.cpp",
             "cpp/main.cpp",
         ],
     ) + [
@@ -45,6 +65,7 @@ cc_library(
         "cpp/external",
         "cpp/external/tclap-1.2.5/include",
         "cpp/external/filesystem-1.5.8/include",
+        "cpp/external/half-2.2.0/include",
         "external/opencl/include/CL",
     ],
     defines = [
@@ -53,28 +74,14 @@ cc_library(
         "NO_LIBZIP",
         "LITTLE_ENDIAN=1234",
         "BIG_ENDIAN=4321",
-        "BYTE_ORDER=LITTLE_ENDIAN",
+        "BYTE_ORDER=1234",
+        "BUILD_DISTRIBUTED=0",
     ],
     deps = [
+        ":opencl",
         "@bazel_tools//tools/cpp:malloc",
         "@protobuf//:protobuf",
         "@zlib//:zlib",
-        ":opencl",
+        "@eigen_repo//:eigen",
     ],
-)
-
-cc_library(
-    name = "opencl",
-    srcs = [
-        "external/opencl/opencl_proxy.cpp",
-    ],
-    hdrs = glob(["external/opencl/include/CL/CL/*.h"]),
-    includes = ["external/opencl/include/CL"],
-    linkopts = ["-ldl"],
-)
-
-cc_binary(
-    name = "libkatago_opencl.so",
-    linkshared = 1,
-    deps = [":katago_lib"],
 )

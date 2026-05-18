@@ -6,3 +6,20 @@ module(
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "protobuf", version = "33.4")
 bazel_dep(name = "zlib", version = "1.3.1")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+    name = "eigen_repo",
+    build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "eigen",
+    hdrs = glob(["Eigen/**", "unsupported/Eigen/**"]),
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+""",
+    integrity = "sha256-66Pz1BTS+MuikZx47G2qsI/HG6K6SuUCt+XU2Z/ALNo=",
+    strip_prefix = "eigen-3.4.0",
+    urls = ["https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip"],
+)
