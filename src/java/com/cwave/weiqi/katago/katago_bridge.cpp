@@ -299,6 +299,32 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
     return env->NewStringUTF("= ok");
 }
 
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridge_getBoardState(JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (!initialized) return nullptr;
+
+    const Board& board = bot->getRootBoard();
+    int xSize = board.x_size;
+    int ySize = board.y_size;
+    int size = xSize * ySize;
+
+    jintArray result = env->NewIntArray(size);
+    jint* fill = new jint[size];
+
+    for (int y = 0; y < ySize; y++) {
+        for (int x = 0; x < xSize; x++) {
+            Player pla = board.colors[Location::getLoc(x, y, xSize)];
+            // 0: EMPTY (P_NONE), 1: BLACK (P_BLACK), 2: WHITE (P_WHITE)
+            fill[y * xSize + x] = (jint)pla;
+        }
+    }
+
+    env->SetIntArrayRegion(result, 0, size, fill);
+    delete[] fill;
+    return result;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(JNIEnv* env, jobject thiz) {
     std::lock_guard<std::mutex> lock(engineMutex);

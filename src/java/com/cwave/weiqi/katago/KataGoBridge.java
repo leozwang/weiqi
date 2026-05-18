@@ -25,6 +25,13 @@ public class KataGoBridge {
     public native String sendGtpCommand(String command);
 
     /**
+     * Returns the current board state as an array of integers.
+     * 0: EMPTY, 1: BLACK, 2: WHITE
+     * @return 1D array of size boardSize * boardSize
+     */
+    public native int[] getBoardState();
+
+    /**
      * Shuts down the KataGo engine.
      */
     public native void shutdown();

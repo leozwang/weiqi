@@ -41,631 +41,643 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class GameFragment : Fragment() {
-    private val bridge = KataGoBridge()
-    private val boardSize = 19
+  private val bridge = KataGoBridge()
+  private val boardSize = 19
 
-    enum class Stone { EMPTY, BLACK, WHITE }
+  enum class Stone { EMPTY, BLACK, WHITE }
 
-    data class CandidateMove(
-        val x: Int,
-        val y: Int,
-        val winrate: Double,
-        val visits: Long
-    )
+  data class CandidateMove(
+    val x: Int,
+    val y: Int,
+    val winrate: Double,
+    val visits: Long
+  )
 
-    data class AnalysisResult(
-        val winrate: Double = 0.5,
-        val scoreLead: Double = 0.0,
-        val ownership: DoubleArray = DoubleArray(361) { 0.0 },
-        val candidates: List<CandidateMove> = emptyList()
-    )
+  data class AnalysisResult(
+    val winrate: Double = 0.5,
+    val scoreLead: Double = 0.0,
+    val ownership: DoubleArray = DoubleArray(361) { 0.0 },
+    val candidates: List<CandidateMove> = emptyList()
+  )
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View {
-        return ComposeView(requireContext()).apply {
-            setContent {
-                MaterialTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colors.background
-                    ) {
-                        GameScreen(bridge)
-                    }
-                }
-            }
+  override fun onCreateView(
+    inflater: LayoutInflater,
+    container: ViewGroup?,
+    savedInstanceState: Bundle?
+  ): View {
+    return ComposeView(requireContext()).apply {
+      setContent {
+        MaterialTheme {
+          Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colors.background
+          ) {
+            GameScreen(bridge)
+          }
         }
+      }
+    }
+  }
+
+  @Composable
+  fun GameScreen(bridge: KataGoBridge) {
+    val scope = rememberCoroutineScope()
+    var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
+    var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var lastMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var analysis by remember { mutableStateOf(AnalysisResult()) }
+    var showAnalysis by remember { mutableStateOf(false) }
+    var isEngineInitialized by remember { mutableStateOf(false) }
+    var statusText by remember { mutableStateOf("Initializing engine...") }
+    var lastMoveText by remember { mutableStateOf("No moves yet") }
+    var isThinking by remember { mutableStateOf(false) }
+
+    val context = requireContext()
+    val soundPool = remember {
+      android.media.SoundPool.Builder()
+        .setMaxStreams(1)
+        .setAudioAttributes(
+          android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_GAME)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        )
+        .build()
+    }
+    val soundId = remember { mutableStateOf<Int?>(null) }
+        
+    LaunchedEffect(Unit) {
+      soundId.value = soundPool.load(context, R.raw.place_stone, 1)
     }
 
-    @Composable
-    fun GameScreen(bridge: KataGoBridge) {
-        val scope = rememberCoroutineScope()
-        var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
-        var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-        var lastMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-        var analysis by remember { mutableStateOf(AnalysisResult()) }
-        var showAnalysis by remember { mutableStateOf(false) }
-        var isEngineInitialized by remember { mutableStateOf(false) }
-        var statusText by remember { mutableStateOf("Initializing engine...") }
-        var lastMoveText by remember { mutableStateOf("No moves yet") }
-        var isThinking by remember { mutableStateOf(false) }
+    fun playMoveSound() {
+      soundId.value?.let { id ->
+        soundPool.play(id, 1f, 1f, 0, 0, 1f)
+      }
+    }
 
-        val context = requireContext()
-        val soundPool = remember {
-            android.media.SoundPool.Builder()
-                .setMaxStreams(1)
-                .setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                .build()
-        }
-        val soundId = remember { mutableStateOf<Int?>(null) }
-        
-        LaunchedEffect(Unit) {
-            soundId.value = soundPool.load(context, R.raw.place_stone, 1)
-        }
+    LaunchedEffect(Unit) {
+      statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
+      val result = initEngine()
+      if (result == 0) {
+        isEngineInitialized = true
+        statusText = "Ready. Your move (Black)."
+        // Initial analysis
+        analysis = getAnalysis(bridge)
+      } else {
+        statusText = "Engine Init Failed: $result"
+      }
+    }
 
-        fun playMoveSound() {
-            soundId.value?.let { id ->
-                soundPool.play(id, 1f, 1f, 0, 0, 1f)
+    Scaffold(
+      topBar = {
+        TopAppBar(
+          title = { Text("Go Game") },
+          backgroundColor = MaterialTheme.colors.primary,
+          contentColor = MaterialTheme.colors.onPrimary,
+          elevation = 4.dp,
+          actions = {
+            IconButton(onClick = { showAnalysis = !showAnalysis }) {
+              Icon(
+                imageVector = if (showAnalysis) Icons.Default.Visibility
+                else Icons.Default.VisibilityOff,
+                  contentDescription = "Toggle AI Analysis"
+              )
             }
-        }
-
-        LaunchedEffect(Unit) {
-            statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
-            val result = initEngine()
-            if (result == 0) {
-                isEngineInitialized = true
-                statusText = "Ready. Your move (Black)."
-                // Initial analysis
-                analysis = getAnalysis(bridge)
-            } else {
-                statusText = "Engine Init Failed: $result"
-            }
-        }
-
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Go Game") },
-                    backgroundColor = MaterialTheme.colors.primary,
-                    contentColor = MaterialTheme.colors.onPrimary,
-                    elevation = 4.dp,
-                    actions = {
-                        IconButton(onClick = { showAnalysis = !showAnalysis }) {
-                            Icon(
-                                imageVector = if (showAnalysis) Icons.Default.Visibility 
-                                             else Icons.Default.VisibilityOff,
-                                contentDescription = "Toggle AI Analysis"
-                            )
-                        }
-                    }
-                )
-            }
-        ) { paddingValues ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                horizontalAlignment = Alignment.CenterHorizontally
+          }
+        )
+      }
+    ) { paddingValues ->
+          Column(
+            modifier = Modifier
+              .fillMaxSize()
+              .padding(paddingValues),
+            horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+            // Fixed-height Header
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(130.dp)
+                .padding(16.dp),
+              contentAlignment = Alignment.Center
             ) {
-                // Fixed-height Header
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(130.dp)
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
+              Card(
+                modifier = Modifier.fillMaxSize(),
+                elevation = 2.dp,
+                shape = MaterialTheme.shapes.medium
+              ) {
+                Column(
+                  modifier = Modifier.padding(8.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.Center
                 ) {
-                    Card(
-                        modifier = Modifier.fillMaxSize(),
-                        elevation = 2.dp,
-                        shape = MaterialTheme.shapes.medium
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = statusText,
-                                style = MaterialTheme.typography.subtitle1,
-                                fontWeight = FontWeight.Bold
-                            )
+                  Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.subtitle1,
+                    fontWeight = FontWeight.Bold
+                  )
 
-                            val winratePercent = (analysis.winrate * 100).toInt()
-                            val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
-                            val leadText = if (analysis.scoreLead >= 0) "B+$scoreLeadFormatted" else "W+$scoreLeadFormatted"
-                            
-                            Text(
-                                text = "Winrate: $winratePercent% | Lead: $leadText",
-                                style = MaterialTheme.typography.caption,
-                                color = MaterialTheme.colors.primary
-                            )
+                  val winratePercent = (analysis.winrate * 100).toInt()
+                  val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
+                  val leadText = if (analysis.scoreLead >= 0) "B+$scoreLeadFormatted" else "W+$scoreLeadFormatted"
 
-                            Text(
-                                text = lastMoveText,
-                                style = MaterialTheme.typography.body2,
-                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                            
-                            Box(modifier = Modifier.height(8.dp).fillMaxWidth().padding(top = 4.dp)) {
-                                if (isThinking) {
-                                    LinearProgressIndicator(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        color = MaterialTheme.colors.secondary
-                                    )
-                                }
-                            }
+                  Text(
+                    text = "Winrate: $winratePercent% | Lead: $leadText",
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.primary
+                  )
+
+                  Text(
+                    text = lastMoveText,
+                    style = MaterialTheme.typography.body2,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 2.dp)
+                  )
+
+                  Box(modifier = Modifier.height(8.dp).fillMaxWidth().padding(top = 4.dp)) {
+                    if (isThinking) {
+                      LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colors.secondary
+                      )
+                    }
+                  }
+                }
+              }
+            }
+
+            // Board Container
+            Box(
+              modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+              contentAlignment = Alignment.Center
+            ) {
+              Box(
+                modifier = Modifier
+                  .aspectRatio(1f)
+                  .fillMaxWidth()
+                  .padding(horizontal = 4.dp)
+                  .background(Color(0xFFDCB35C))
+              ) {
+                val boardMargin = 0.08f
+
+                Canvas(
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(isEngineInitialized, isThinking) {
+                      if (!isEngineInitialized || isThinking) return@pointerInput
+                        detectTapGestures { offset ->
+                          val marginPx = size.width * boardMargin
+                        val gridSizePx = size.width - 2 * marginPx
+                        val stepPx = gridSizePx / (boardSize - 1)
+
+                        val x = ((offset.x - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
+                        val y = ((offset.y - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
+
+                        if (boardState[y][x] == Stone.EMPTY) {
+                          previewMove = x to y
+                        }
                         }
                     }
-                }
-
-                // Board Container
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .aspectRatio(1f)
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp)
-                            .background(Color(0xFFDCB35C))
-                    ) {
-                        val boardMargin = 0.08f
+                  val marginPx = size.width * boardMargin
+                  val gridSizePx = size.width - 2 * marginPx
+                  val stepPx = gridSizePx / (boardSize - 1)
+                  val stoneRadius = (stepPx / 2) * 0.95f
 
-                        Canvas(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(isEngineInitialized, isThinking) {
-                                    if (!isEngineInitialized || isThinking) return@pointerInput
-                                    detectTapGestures { offset ->
-                                        val marginPx = size.width * boardMargin
-                                        val gridSizePx = size.width - 2 * marginPx
-                                        val stepPx = gridSizePx / (boardSize - 1)
-                                        
-                                        val x = ((offset.x - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
-                                        val y = ((offset.y - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
-                                        
-                                        if (boardState[y][x] == Stone.EMPTY) {
-                                            previewMove = x to y
-                                        }
-                                    }
-                                }
-                        ) {
-                            val marginPx = size.width * boardMargin
-                            val gridSizePx = size.width - 2 * marginPx
-                            val stepPx = gridSizePx / (boardSize - 1)
-                            val stoneRadius = (stepPx / 2) * 0.95f
+                  // Draw Coordinates
+                  val textPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.BLACK
+                    textSize = 10.dp.toPx()
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                  }
+                  drawIntoCanvas { canvas ->
+                    for (i in 0 until boardSize) {
+                      val pos = marginPx + i * stepPx
+                      val colLabel = toGtpCoords(i, 0).substring(0, 1)
+                      canvas.nativeCanvas.drawText(colLabel, pos, marginPx * 0.4f, textPaint)
+                      canvas.nativeCanvas.drawText(colLabel, pos, size.height - marginPx * 0.2f, textPaint)
 
-                            // Draw Coordinates
-                            val textPaint = android.graphics.Paint().apply {
-                                color = android.graphics.Color.BLACK
-                                textSize = 10.dp.toPx()
-                                textAlign = android.graphics.Paint.Align.CENTER
-                                isAntiAlias = true
-                            }
-                            drawIntoCanvas { canvas ->
-                                for (i in 0 until boardSize) {
-                                    val pos = marginPx + i * stepPx
-                                    val colLabel = toGtpCoords(i, 0).substring(0, 1)
-                                    canvas.nativeCanvas.drawText(colLabel, pos, marginPx * 0.4f, textPaint)
-                                    canvas.nativeCanvas.drawText(colLabel, pos, size.height - marginPx * 0.2f, textPaint)
+                      val rowLabel = (19 - i).toString()
+                      canvas.nativeCanvas.drawText(rowLabel, marginPx * 0.4f, pos + 4.dp.toPx(), textPaint)
+                      canvas.nativeCanvas.drawText(rowLabel, size.width - marginPx * 0.4f, pos + 4.dp.toPx(), textPaint)
+                    }
+                  }
 
-                                    val rowLabel = (19 - i).toString()
-                                    canvas.nativeCanvas.drawText(rowLabel, marginPx * 0.4f, pos + 4.dp.toPx(), textPaint)
-                                    canvas.nativeCanvas.drawText(rowLabel, size.width - marginPx * 0.4f, pos + 4.dp.toPx(), textPaint)
-                                }
-                            }
+                  // Draw Grid Lines
+                  val lineStart = marginPx
+                  val lineEnd = marginPx + (boardSize - 1) * stepPx
 
-                            // Draw Grid Lines
-                            val lineStart = marginPx
-                            val lineEnd = marginPx + (boardSize - 1) * stepPx
+                  for (i in 0 until boardSize) {
+                    val pos = marginPx + i * stepPx
+                    drawLine(
+                      color = Color.Black.copy(alpha = 0.8f),
+                      start = Offset(lineStart, pos),
+                      end = Offset(lineEnd, pos),
+                      strokeWidth = 1.dp.toPx()
+                    )
+                    drawLine(
+                      color = Color.Black.copy(alpha = 0.8f),
+                      start = Offset(pos, lineStart),
+                      end = Offset(pos, lineEnd),
+                      strokeWidth = 1.dp.toPx()
+                    )
+                  }
 
-                            for (i in 0 until boardSize) {
-                                val pos = marginPx + i * stepPx
-                                drawLine(
-                                    color = Color.Black.copy(alpha = 0.8f),
-                                    start = Offset(lineStart, pos),
-                                    end = Offset(lineEnd, pos),
-                                    strokeWidth = 1.dp.toPx()
-                                )
-                                drawLine(
-                                    color = Color.Black.copy(alpha = 0.8f),
-                                    start = Offset(pos, lineStart),
-                                    end = Offset(pos, lineEnd),
-                                    strokeWidth = 1.dp.toPx()
-                                )
-                            }
+                  // Draw Hoshi
+                  val hoshiIndices = listOf(3, 9, 15)
+                  for (rowIdx in hoshiIndices) {
+                    for (colIdx in hoshiIndices) {
+                      drawCircle(
+                        color = Color.Black,
+                        radius = 2.5.dp.toPx(),
+                        center = Offset(marginPx + colIdx * stepPx, marginPx + rowIdx * stepPx)
+                      )
+                    }
+                  }
 
-                            // Draw Hoshi
-                            val hoshiIndices = listOf(3, 9, 15)
-                            for (rowIdx in hoshiIndices) {
-                                for (colIdx in hoshiIndices) {
-                                    drawCircle(
-                                        color = Color.Black,
-                                        radius = 2.5.dp.toPx(),
-                                        center = Offset(marginPx + colIdx * stepPx, marginPx + rowIdx * stepPx)
-                                    )
-                                }
-                            }
-
-                            if (showAnalysis) {
-                                // Draw Ownership Dots (Territory Analysis)
-                                for (row in 0 until boardSize) {
-                                    for (col in 0 until boardSize) {
-                                        val score = analysis.ownership[row * boardSize + col]
-                                        if (abs(score) > 0.1) {
-                                            val centerX = marginPx + col * stepPx
-                                            val centerY = marginPx + row * stepPx
-                                            drawCircle(
-                                                color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
-                                                        else Color.White.copy(alpha = (-score * 0.4).toFloat()),
-                                                radius = 3.dp.toPx(),
-                                                center = Offset(centerX, centerY)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Draw Candidate Moves (Suggestions)
-                                val bestMove = analysis.candidates.maxByOrNull { it.visits }
-
-                                analysis.candidates.forEach { candidate ->
-                                    val centerX = marginPx + candidate.x * stepPx
-                                    val centerY = marginPx + candidate.y * stepPx
-                                    val candidateRadius = stoneRadius * 0.75f // 75% of stone size
-                                    
-                                    if (candidate == bestMove) {
-                                        // Highlight best move with a dark red ring
-                                        drawCircle(
-                                            color = Color(0xFFB71C1C), // Dark Red
-                                            radius = stoneRadius * 0.9f,
-                                            center = Offset(centerX, centerY),
-                                            style = Stroke(width = 3.dp.toPx())
-                                        )
-                                    } else {
-                                        // Other candidates as solid light red dots
-                                        drawCircle(
-                                            color = Color(0xFFE57373), // Light Red
-                                            radius = candidateRadius,
-                                            center = Offset(centerX, centerY)
-                                        )
-                                    }
-
-                                    // Winrate text
-                                    val winrateText = "${(candidate.winrate * 100).toInt()}%"
-                                    val textPaint = android.graphics.Paint().apply {
-                                        color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C") 
-                                                else android.graphics.Color.WHITE
-                                        textSize = 8.dp.toPx()
-                                        textAlign = android.graphics.Paint.Align.CENTER
-                                        isAntiAlias = true
-                                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                                    }
-                                    drawIntoCanvas { canvas ->
-                                        canvas.nativeCanvas.drawText(
-                                            winrateText, 
-                                            centerX, 
-                                            centerY + 3.dp.toPx(), 
-                                            textPaint
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Draw Stones
-                            for (row in 0 until boardSize) {
-                                for (col in 0 until boardSize) {
-                                    val stone = boardState[row][col]
-                                    if (stone != Stone.EMPTY) {
-                                        val centerX = marginPx + col * stepPx
-                                        val centerY = marginPx + row * stepPx
-                                        
-                                        if (stone == Stone.BLACK) {
-                                            drawCircle(
-                                                brush = Brush.radialGradient(
-                                                    colors = listOf(Color(0xFF333333), Color.Black),
-                                                    center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                                                    radius = stoneRadius * 1.5f
-                                                ),
-                                                radius = stoneRadius,
-                                                center = Offset(centerX, centerY)
-                                            )
-                                        } else {
-                                            drawCircle(
-                                                brush = Brush.radialGradient(
-                                                    colors = listOf(Color.White, Color(0xFFDDDDDD)),
-                                                    center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                                                    radius = stoneRadius * 1.5f
-                                                ),
-                                                radius = stoneRadius,
-                                                center = Offset(centerX, centerY)
-                                            )
-                                            drawCircle(
-                                                color = Color.Black.copy(alpha = 0.1f),
-                                                radius = stoneRadius,
-                                                center = Offset(centerX, centerY),
-                                                style = Stroke(width = 0.5.dp.toPx())
-                                            )
-                                        }
-
-                                        // Mark Last Move
-                                        if (lastMove?.first == col && lastMove?.second == row) {
-                                            drawCircle(
-                                                color = if (stone == Stone.BLACK) Color.White else Color.Black,
-                                                radius = 4.dp.toPx(),
-                                                center = Offset(centerX, centerY),
-                                                style = Stroke(width = 1.5.dp.toPx())
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Draw Preview Stone (Ghost Stone)
-                            previewMove?.let { (px, py) ->
-                                val centerX = marginPx + px * stepPx
-                                val centerY = marginPx + py * stepPx
-                                drawCircle(
-                                    color = Color.Black.copy(alpha = 0.4f),
-                                    radius = stoneRadius,
-                                    center = Offset(centerX, centerY)
-                                )
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    radius = stoneRadius * 0.4f,
-                                    center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
-                                )
-                            }
+                  if (showAnalysis) {
+                    // Draw Ownership Dots (Territory Analysis)
+                    for (row in 0 until boardSize) {
+                      for (col in 0 until boardSize) {
+                        val score = analysis.ownership[row * boardSize + col]
+                        if (abs(score) > 0.1) {
+                          val centerX = marginPx + col * stepPx
+                          val centerY = marginPx + row * stepPx
+                          drawCircle(
+                            color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
+                            else Color.White.copy(alpha = (-score * 0.4).toFloat()),
+                              radius = 3.dp.toPx(),
+                            center = Offset(centerX, centerY)
+                          )
                         }
-                    }
-                }
-
-                // Actions Row
-                Row(
-                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // New Game Button
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                bridge.sendGtpCommand("clear_board")
-                                boardState = Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
-                                previewMove = null
-                                lastMove = null
-                                analysis = AnalysisResult()
-                                statusText = "Board cleared. Your move."
-                                lastMoveText = "No moves yet"
-                            }
-                        },
-                        modifier = Modifier.height(56.dp),
-                        shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = MaterialTheme.colors.secondary,
-                            contentColor = MaterialTheme.colors.onSecondary
-                        )
-                    ) {
-                        Text("NEW GAME", fontWeight = FontWeight.Bold)
+                      }
                     }
 
-                    // Place Button (Circular)
-                    Button(
-                        onClick = {
-                            val move = previewMove ?: return@Button
-                            val (x, y) = move
-                            scope.launch {
-                                playMove(x, y, Stone.BLACK, bridge) { success, moveStr ->
-                                    if (success) {
-                                        val newBoard = Array(boardSize) { r -> boardState[r].copyOf() }
-                                        newBoard[y][x] = Stone.BLACK
-                                        boardState = newBoard
-                                        lastMoveText = "Black played $moveStr"
-                                        previewMove = null
-                                        lastMove = x to y
-                                        playMoveSound()
-                                        
-                                        // AI Move
-                                        scope.launch {
-                                            isThinking = true
-                                            statusText = "KataGo is thinking..."
-                                            genAiMove(Stone.WHITE, bridge) { aiX, aiY, aiMoveStr ->
-                                                isThinking = false
-                                                if (aiX != -1 && aiY != -1) {
-                                                    val aiBoard = Array(boardSize) { r -> boardState[r].copyOf() }
-                                                    aiBoard[aiY][aiX] = Stone.WHITE
-                                                    boardState = aiBoard
-                                                    lastMove = aiX to aiY
-                                                    playMoveSound()
-                                                    lastMoveText = "White (AI) played $aiMoveStr"
-                                                    statusText = "Your turn (Black)."
-                                                } else {
-                                                    statusText = "KataGo passed or error."
-                                                }
-                                                // Get analysis after moves
-                                                scope.launch {
-                                                    analysis = getAnalysis(bridge)
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        statusText = "Illegal move at ${toGtpCoords(x, y)}"
-                                        previewMove = null
-                                    }
-                                }
-                            }
-                        },
-                        enabled = previewMove != null && !isThinking,
-                        modifier = Modifier.size(80.dp),
-                        shape = CircleShape,
-                        elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
-                    ) {
-                        Text("PLACE", fontWeight = FontWeight.Bold)
+                    // Draw Candidate Moves (Suggestions)
+                    val bestMove = analysis.candidates.maxByOrNull { it.visits }
+
+                    analysis.candidates.forEach { candidate ->
+                      val centerX = marginPx + candidate.x * stepPx
+                    val centerY = marginPx + candidate.y * stepPx
+                    val candidateRadius = stoneRadius * 0.75f // 75% of stone size
+
+                    if (candidate == bestMove) {
+                      // Highlight best move with a dark red ring
+                      drawCircle(
+                        color = Color(0xFFB71C1C), // Dark Red
+                        radius = stoneRadius * 0.9f,
+                        center = Offset(centerX, centerY),
+                        style = Stroke(width = 3.dp.toPx())
+                      )
+                    } else {
+                      // Other candidates as solid light red dots
+                      drawCircle(
+                        color = Color(0xFFE57373), // Light Red
+                        radius = candidateRadius,
+                        center = Offset(centerX, centerY)
+                      )
                     }
+
+                    // Winrate text
+                    val winrateText = "${(candidate.winrate * 100).toInt()}%"
+                    val textPaint = android.graphics.Paint().apply {
+                      color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C")
+                      else android.graphics.Color.WHITE
+                        textSize = 8.dp.toPx()
+                      textAlign = android.graphics.Paint.Align.CENTER
+                      isAntiAlias = true
+                      typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    }
+                    drawIntoCanvas { canvas ->
+                      canvas.nativeCanvas.drawText(
+                        winrateText,
+                        centerX,
+                        centerY + 3.dp.toPx(),
+                        textPaint
+                      )
+                    }
+                    }
+                  }
+
+                  // Draw Stones
+                  for (row in 0 until boardSize) {
+                    for (col in 0 until boardSize) {
+                      val stone = boardState[row][col]
+                      if (stone != Stone.EMPTY) {
+                        val centerX = marginPx + col * stepPx
+                        val centerY = marginPx + row * stepPx
+
+                        if (stone == Stone.BLACK) {
+                          drawCircle(
+                            brush = Brush.radialGradient(
+                              colors = listOf(Color(0xFF333333), Color.Black),
+                              center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                              radius = stoneRadius * 1.5f
+                            ),
+                            radius = stoneRadius,
+                            center = Offset(centerX, centerY)
+                          )
+                        } else {
+                          drawCircle(
+                            brush = Brush.radialGradient(
+                              colors = listOf(Color.White, Color(0xFFDDDDDD)),
+                              center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                              radius = stoneRadius * 1.5f
+                            ),
+                            radius = stoneRadius,
+                            center = Offset(centerX, centerY)
+                          )
+                          drawCircle(
+                            color = Color.Black.copy(alpha = 0.1f),
+                            radius = stoneRadius,
+                            center = Offset(centerX, centerY),
+                            style = Stroke(width = 0.5.dp.toPx())
+                          )
+                        }
+
+                        // Mark Last Move
+                        if (lastMove?.first == col && lastMove?.second == row) {
+                          drawCircle(
+                            color = if (stone == Stone.BLACK) Color.White else Color.Black,
+                            radius = 4.dp.toPx(),
+                            center = Offset(centerX, centerY),
+                            style = Stroke(width = 1.5.dp.toPx())
+                          )
+                        }
+                      }
+                    }
+                  }
+
+                  // Draw Preview Stone (Ghost Stone)
+                  previewMove?.let { (px, py) ->
+                    val centerX = marginPx + px * stepPx
+                  val centerY = marginPx + py * stepPx
+                  drawCircle(
+                    color = Color.Black.copy(alpha = 0.4f),
+                    radius = stoneRadius,
+                    center = Offset(centerX, centerY)
+                  )
+                  drawCircle(
+                    color = Color.White.copy(alpha = 0.6f),
+                    radius = stoneRadius * 0.4f,
+                    center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
+                  )
+                  }
                 }
-
-                Spacer(modifier = Modifier.height(32.dp))
+              }
             }
-        }
-    }
 
-    private suspend fun initEngine(): Int = withContext(Dispatchers.IO) {
-        try {
-            val configPath = copyAssetToFile("gtp.cfg")
-            val modelPath = copyAssetToFile("model.bin.gz")
-            if (configPath == null || modelPath == null) {
-                Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
-                return@withContext -4
+            // Actions Row
+            Row(
+              modifier = Modifier.padding(16.dp).fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              // New Game Button
+              Button(
+                onClick = {
+                  scope.launch {
+                    bridge.sendGtpCommand("clear_board")
+                    boardState = syncBoardState(bridge)
+                    previewMove = null
+                    lastMove = null
+                    analysis = AnalysisResult()
+                    statusText = "Board cleared. Your move."
+                    lastMoveText = "No moves yet"
+                  }
+                },
+                modifier = Modifier.height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = ButtonDefaults.buttonColors(
+                  backgroundColor = MaterialTheme.colors.secondary,
+                  contentColor = MaterialTheme.colors.onSecondary
+                )
+              ) {
+                Text("NEW GAME", fontWeight = FontWeight.Bold)
+              }
+
+              // Place Button (Circular)
+              Button(
+                onClick = {
+                  val move = previewMove ?: return@Button
+                  val (x, y) = move
+                  scope.launch {
+                    playMove(x, y, Stone.BLACK, bridge) { success, moveStr ->
+                      if (success) {
+                        boardState = syncBoardState(bridge)
+                        lastMoveText = "Black played $moveStr"
+                        previewMove = null
+                        lastMove = x to y
+                        playMoveSound()
+
+                        // AI Move
+                        scope.launch {
+                          isThinking = true
+                          statusText = "KataGo is thinking..."
+                          genAiMove(Stone.WHITE, bridge) { aiX, aiY, aiMoveStr ->
+                            isThinking = false
+                          boardState = syncBoardState(bridge)
+                          if (aiX != -1 && aiY != -1) {
+                            lastMove = aiX to aiY
+                            playMoveSound()
+                            lastMoveText = "White (AI) played $aiMoveStr"
+                            statusText = "Your turn (Black)."
+                          } else {
+                            statusText = "KataGo passed or error."
+                          }
+                          // Get analysis after moves
+                          scope.launch {
+                            analysis = getAnalysis(bridge)
+                          }
+                          }
+                        }
+                      } else {
+                        statusText = "Illegal move at ${toGtpCoords(x, y)}"
+                        previewMove = null
+                      }
+                    }
+                  }
+                },
+                enabled = previewMove != null && !isThinking,
+                modifier = Modifier.size(80.dp),
+                shape = CircleShape,
+                elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
+              ) {
+                Text("PLACE", fontWeight = FontWeight.Bold)
+              }
             }
-            
-            Log.i("GameFragment", "Starting KataGo Engine Init...")
-            val result = bridge.init(configPath, modelPath)
-            Log.i("GameFragment", "Engine Init Result: $result")
-            result
-        } catch (e: Exception) {
-            Log.e("GameFragment", "Engine Init Exception", e)
-            -5
-        }
+
+            Spacer(modifier = Modifier.height(32.dp))
+          }
+    }
+  }
+
+  private suspend fun initEngine(): Int = withContext(Dispatchers.IO) {
+    try {
+      val configPath = copyAssetToFile("gtp.cfg")
+      val modelPath = copyAssetToFile("model.bin.gz")
+      if (configPath == null || modelPath == null) {
+        Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
+        return@withContext -4
+      }
+
+      Log.i("GameFragment", "Starting KataGo Engine Init...")
+      val result = bridge.init(configPath, modelPath)
+      Log.i("GameFragment", "Engine Init Result: $result")
+      result
+    } catch (e: Exception) {
+      Log.e("GameFragment", "Engine Init Exception", e)
+      -5
+    }
+  }
+
+  private fun copyAssetToFile(assetName: String): String? {
+    val destFile = File(requireContext().filesDir, assetName)
+
+    // If file already exists and has substantial size, skip copying
+    // g170 model is ~200MB, gtp.cfg is ~30KB
+    if (destFile.exists() && destFile.length() > 0) {
+      Log.i("GameFragment", "Asset $assetName already exists, skipping copy.")
+      return destFile.absolutePath
     }
 
-    private fun copyAssetToFile(assetName: String): String? {
-        val destFile = File(requireContext().filesDir, assetName)
-        
-        // If file already exists and has substantial size, skip copying
-        // g170 model is ~200MB, gtp.cfg is ~30KB
-        if (destFile.exists() && destFile.length() > 0) {
-            Log.i("GameFragment", "Asset $assetName already exists, skipping copy.")
-            return destFile.absolutePath
+    val tempFile = File(requireContext().filesDir, "$assetName.tmp")
+    try {
+      Log.i("GameFragment", "Extracting asset $assetName to internal storage...")
+      requireContext().assets.open(assetName).use { inputStream ->
+        FileOutputStream(tempFile).use { outputStream ->
+          inputStream.copyTo(outputStream)
         }
+      }
+      if (tempFile.renameTo(destFile)) {
+        Log.i("GameFragment", "Successfully extracted $assetName")
+        return destFile.absolutePath
+      } else {
+        Log.e("GameFragment", "Failed to rename temp file for $assetName")
+        return null
+      }
+    } catch (e: Exception) {
+      Log.e("GameFragment", "Error copying asset $assetName", e)
+      return null
+    } finally {
+      if (tempFile.exists()) tempFile.delete()
+      }
+  }
 
-        val tempFile = File(requireContext().filesDir, "$assetName.tmp")
-        try {
-            Log.i("GameFragment", "Extracting asset $assetName to internal storage...")
-            requireContext().assets.open(assetName).use { inputStream ->
-                FileOutputStream(tempFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
-            }
-            if (tempFile.renameTo(destFile)) {
-                Log.i("GameFragment", "Successfully extracted $assetName")
-                return destFile.absolutePath
-            } else {
-                Log.e("GameFragment", "Failed to rename temp file for $assetName")
-                return null
-            }
-        } catch (e: Exception) {
-            Log.e("GameFragment", "Error copying asset $assetName", e)
-            return null
-        } finally {
-            if (tempFile.exists()) tempFile.delete()
-        }
+  private fun toGtpCoords(x: Int, y: Int): String {
+    val col = if (x >= 8) ('A' + x + 1).toChar() else ('A' + x).toChar()
+    val row = 19 - y
+    return "$col$row"
+  }
+
+  private fun fromGtpCoords(gtp: String): Pair<Int, Int> {
+    val response = if (gtp.startsWith("=")) gtp.substring(1).trim() else gtp.trim()
+    if (response.isEmpty() || response.uppercase() == "PASS") return -1 to -1
+
+    val coord = response.split(" ")[0].uppercase()
+    val colChar = coord[0]
+    val x = if (colChar > 'I') colChar - 'A' - 1 else colChar - 'A'
+    val row = coord.substring(1).toInt()
+    val y = 19 - row
+    return x to y
+  }
+
+  private suspend fun playMove(x: Int, y: Int, stone: Stone, bridge: KataGoBridge, onResult: (Boolean, String) -> Unit) {
+    val color = if (stone == Stone.BLACK) "black" else "white"
+    val moveStr = toGtpCoords(x, y)
+    val response = withContext(Dispatchers.IO) {
+      bridge.sendGtpCommand("play $color $moveStr")
     }
+    onResult(response.startsWith("="), moveStr)
+  }
 
-    private fun toGtpCoords(x: Int, y: Int): String {
-        val col = if (x >= 8) ('A' + x + 1).toChar() else ('A' + x).toChar()
-        val row = 19 - y
-        return "$col$row"
+  private suspend fun genAiMove(stone: Stone, bridge: KataGoBridge, onResult: (Int, Int, String) -> Unit) {
+    val color = if (stone == Stone.BLACK) "black" else "white"
+    val response = withContext(Dispatchers.IO) {
+      bridge.sendGtpCommand("genmove $color")
     }
-
-    private fun fromGtpCoords(gtp: String): Pair<Int, Int> {
-        val response = if (gtp.startsWith("=")) gtp.substring(1).trim() else gtp.trim()
-        if (response.isEmpty() || response.uppercase() == "PASS") return -1 to -1
-
-        val coord = response.split(" ")[0].uppercase()
-        val colChar = coord[0]
-        val x = if (colChar > 'I') colChar - 'A' - 1 else colChar - 'A'
-        val row = coord.substring(1).toInt()
-        val y = 19 - row
-        return x to y
-    }
-
-    private suspend fun playMove(x: Int, y: Int, stone: Stone, bridge: KataGoBridge, onResult: (Boolean, String) -> Unit) {
-        val color = if (stone == Stone.BLACK) "black" else "white"
-        val moveStr = toGtpCoords(x, y)
-        val response = withContext(Dispatchers.IO) {
-            bridge.sendGtpCommand("play $color $moveStr")
-        }
-        onResult(response.startsWith("="), moveStr)
-    }
-
-    private suspend fun genAiMove(stone: Stone, bridge: KataGoBridge, onResult: (Int, Int, String) -> Unit) {
-        val color = if (stone == Stone.BLACK) "black" else "white"
-        val response = withContext(Dispatchers.IO) {
-            bridge.sendGtpCommand("genmove $color")
-        }
-        if (response.startsWith("=")) {
-            val parts = response.split(" ")
-            if (parts.size >= 2) {
-                val moveStr = parts[1]
-                if (moveStr.uppercase() == "PASS") {
-                    onResult(-1, -1, "PASS")
-                } else {
-                    val (x, y) = fromGtpCoords(response)
-                    onResult(x, y, moveStr)
-                }
-            }
+    if (response.startsWith("=")) {
+      val parts = response.split(" ")
+      if (parts.size >= 2) {
+        val moveStr = parts[1]
+        if (moveStr.uppercase() == "PASS") {
+          onResult(-1, -1, "PASS")
         } else {
-            onResult(-1, -1, "ERROR")
+          val (x, y) = fromGtpCoords(response)
+          onResult(x, y, moveStr)
         }
+      }
+    } else {
+      onResult(-1, -1, "ERROR")
     }
+  }
 
-    private suspend fun getAnalysis(bridge: KataGoBridge): AnalysisResult = withContext(Dispatchers.IO) {
-        // Query analysis from Black's perspective
-        val response = bridge.sendGtpCommand("kata-get-analysis black")
-        if (response.startsWith("=")) {
-            try {
-                val jsonStr = response.substring(1).trim()
-                val json = JSONObject(jsonStr)
-                val rootInfo = json.getJSONObject("rootInfo")
-                val winrate = rootInfo.getDouble("winrate")
-                val scoreLead = rootInfo.getDouble("scoreLead")
+  private fun syncBoardState(bridge: KataGoBridge): Array<Array<Stone>> {
+    val rawBoard = bridge.boardState ?: return Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
+    val newBoard = Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
+    for (y in 0 until boardSize) {
+      for (x in 0 until boardSize) {
+        val stoneInt = rawBoard[y * boardSize + x]
+        newBoard[y][x] = when (stoneInt) {
+          1 -> Stone.BLACK
+          2 -> Stone.WHITE
+          else -> Stone.EMPTY
+          }
+      }
+    }
+    return newBoard
+  }
 
-                val ownershipArray = json.getJSONArray("ownership")
-                val ownership = DoubleArray(ownershipArray.length())
-                for (i in 0 until ownershipArray.length()) {
-                    ownership[i] = ownershipArray.getDouble(i)
-                }
+  private suspend fun getAnalysis(bridge: KataGoBridge): AnalysisResult = withContext(Dispatchers.IO) {
+    // Query analysis from Black's perspective
+    val response = bridge.sendGtpCommand("kata-get-analysis black")
+    if (response.startsWith("=")) {
+      try {
+        val jsonStr = response.substring(1).trim()
+        val json = JSONObject(jsonStr)
+        val rootInfo = json.getJSONObject("rootInfo")
+        val winrate = rootInfo.getDouble("winrate")
+        val scoreLead = rootInfo.getDouble("scoreLead")
 
-                val moveInfos = json.getJSONArray("moveInfos")
-                val candidates = mutableListOf<CandidateMove>()
-                // Parse top 5 moves with significant visits
-                for (i in 0 until moveInfos.length()) {
-                    val moveInfo = moveInfos.getJSONObject(i)
-                    val moveStr = moveInfo.getString("move")
-                    if (moveStr.uppercase() == "PASS") continue
+        val ownershipArray = json.getJSONArray("ownership")
+        val ownership = DoubleArray(ownershipArray.length())
+        for (i in 0 until ownershipArray.length()) {
+          ownership[i] = ownershipArray.getDouble(i)
+        }
 
-                    val (x, y) = fromGtpCoords(moveStr)
-                    if (x != -1 && y != -1) {
-                        candidates.add(CandidateMove(
-                            x = x,
-                            y = y,
+        val moveInfos = json.getJSONArray("moveInfos")
+        val candidates = mutableListOf<CandidateMove>()
+        // Parse top 5 moves with significant visits
+        for (i in 0 until moveInfos.length()) {
+          val moveInfo = moveInfos.getJSONObject(i)
+          val moveStr = moveInfo.getString("move")
+          if (moveStr.uppercase() == "PASS") continue
+
+          val (x, y) = fromGtpCoords(moveStr)
+          if (x != -1 && y != -1) {
+            candidates.add(CandidateMove(
+                             x = x,
+                             y = y,
                             winrate = moveInfo.getDouble("winrate"),
                             visits = moveInfo.getLong("visits")
-                        ))
-                    }
-                }
-
-                // Sort by visits and keep top 5
-                val topCandidates = candidates.sortedByDescending { it.visits }.take(5)
-
-                AnalysisResult(winrate, scoreLead, ownership, topCandidates)
-            } catch (e: Exception) {
-                Log.e("GameFragment", "Error parsing analysis", e)
-                AnalysisResult()
-            }
-        } else {
-            AnalysisResult()
+            ))
+          }
         }
+
+        // Sort by visits and keep top 5
+        val topCandidates = candidates.sortedByDescending { it.visits }.take(5)
+
+        AnalysisResult(winrate, scoreLead, ownership, topCandidates)
+      } catch (e: Exception) {
+        Log.e("GameFragment", "Error parsing analysis", e)
+        AnalysisResult()
+      }
+    } else {
+      AnalysisResult()
     }
+  }
 }
