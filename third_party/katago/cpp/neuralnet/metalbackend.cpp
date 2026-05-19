@@ -7,7 +7,9 @@
 #include "../neuralnet/metalbackend.h"
 #include "../core/test.h"
 
+#ifdef USE_KATAGO_COREML
 #include <katagocoreml/KataGoConverter.hpp>
+#endif
 #include <ghc/filesystem.hpp>
 #include <mutex>
 #include <chrono>
@@ -64,6 +66,7 @@ static string convertModelToTemp(
   string tempPath = generateTempPath(serverThreadIdx);
   cerr << "Metal backend " << serverThreadIdx << ": Converting model to " << tempPath << endl;
 
+#ifdef USE_KATAGO_COREML
   katagocoreml::ConversionOptions opts;
   opts.board_x_size = boardX;
   opts.board_y_size = boardY;
@@ -85,6 +88,9 @@ static string convertModelToTemp(
     }
     throw runtime_error(string("Metal backend ") + to_string(serverThreadIdx) + ": Core ML model conversion failed: " + e.what());
   }
+#else
+  throw runtime_error("Metal backend: CoreML ANE mode is not supported in this build (compiled without katagocoreml)");
+#endif
 
   cerr << "Metal backend " << serverThreadIdx << ": Conversion completed" << endl;
   return tempPath;

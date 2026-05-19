@@ -10,7 +10,7 @@
 #include "../neuralnet/nneval.h"
 #include "../neuralnet/nninputs.h"
 #include "../neuralnet/nninterface.h"
-#include <KataGoSwift/KataGoSwift-swift.h>
+#include "KataGoSwift-Swift.h"
 
 using namespace std;
 using namespace KataGoSwift;

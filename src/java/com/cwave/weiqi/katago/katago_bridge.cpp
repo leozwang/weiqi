@@ -311,6 +311,57 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         return env->NewStringUTF("= ");
     }
 
+    if (mainCmd == "fixed_handicap") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing count");
+        int n = 0;
+        try {
+            n = std::stoi(parts[1]);
+        } catch (...) {
+            return env->NewStringUTF("? invalid count");
+        }
+        if (n < 2 || n > 9) return env->NewStringUTF("? handicap must be 2-9");
+
+        Board board = bot->getRootBoard();
+        // Clear board first to ensure standard handicap placement
+        board = Board(board.x_size, board.y_size);
+
+        try {
+            PlayUtils::placeFixedHandicap(board, n);
+        } catch (const std::exception& e) {
+            return env->NewStringUTF(("? " + std::string(e.what())).c_str());
+        }
+
+        Player pla = P_WHITE; 
+        BoardHistory hist(board, pla, bot->getRootHist().rules, 0);
+        bot->setPosition(pla, board, hist);
+
+        std::string resp = "= ";
+        for (int y = 0; y < board.y_size; y++) {
+            for (int x = 0; x < board.x_size; x++) {
+                if (board.colors[Location::getLoc(x, y, board.x_size)] == P_BLACK) {
+                    resp += Location::toString(Location::getLoc(x, y, board.x_size), board) + " ";
+                }
+            }
+        }
+        return env->NewStringUTF(resp.c_str());
+    }
+
+    if (mainCmd == "undo") {
+        const BoardHistory& hist = bot->getRootHist();
+        if (hist.moveHistory.size() == 0) return env->NewStringUTF("? cannot undo");
+
+        Board board = hist.initialBoard;
+        Player pla = hist.initialPla;
+        Rules rules = hist.rules;
+        BoardHistory newHist(board, pla, rules, hist.initialEncorePhase);
+
+        for (size_t i = 0; i < hist.moveHistory.size() - 1; i++) {
+            newHist.makeBoardMoveAssumeLegal(board, hist.moveHistory[i].loc, hist.moveHistory[i].pla, nullptr);
+        }
+        bot->setPosition(newHist.presumedNextMovePla, board, newHist);
+        return env->NewStringUTF("= ");
+    }
+
     if (mainCmd == "kata-get-analysis") {
         nlohmann::json json;
         // perspective: P_BLACK is usually 1, P_WHITE is 2 in KataGo

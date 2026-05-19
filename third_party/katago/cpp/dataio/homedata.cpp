@@ -97,7 +97,7 @@ vector<string> HomeData::getDefaultFilesDirs() {
   if(count >= 0 && count < bufSize-1) {
     string exePath(result,count);
     const gfs::path path(gfs::u8path(exePath));
-    string exeDir = path.parent_path().u8string();
+    string exeDir = path.parent_path().string();
     ret.push_back(exeDir);
   }
   ret.push_back(getHomeDataDir(false,""));

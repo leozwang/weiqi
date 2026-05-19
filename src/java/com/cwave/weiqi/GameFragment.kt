@@ -14,7 +14,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.*
@@ -48,6 +50,12 @@ class GameFragment : Fragment() {
 
   enum class Stone { EMPTY, BLACK, WHITE }
   enum class GameMode { USER_BLACK, USER_WHITE, USER_BOTH, AI_BOTH }
+
+  data class GameSettings(
+    val mode: GameMode = GameMode.USER_BLACK,
+    val handicap: Int = 0,
+    val modelName: String = "model.bin.gz"
+  )
 
   data class CandidateMove(
     val x: Int,
@@ -97,7 +105,12 @@ class GameFragment : Fragment() {
     var currentMode by remember { mutableStateOf(GameMode.USER_BLACK) }
     var currentTurn by remember { mutableStateOf(Stone.BLACK) }
     var aiAutoPlay by remember { mutableStateOf(false) }
-    var menuExpanded by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var handicap by remember { mutableStateOf(0) }
+    var currentModelName by remember { mutableStateOf("model.bin.gz") }
+
+    var moveHistory by remember { mutableStateOf(listOf<String>()) }
+    var historyIndex by remember { mutableStateOf(-1) }
 
     // Automatically update analysis when turn changes or analysis is toggled ON
     LaunchedEffect(currentTurn, showAnalysis) {
@@ -161,6 +174,11 @@ class GameFragment : Fragment() {
           playMoveSound()
           val colorStr = if (color == Stone.BLACK) "Black" else "White"
           lastMoveText = "$colorStr (AI) played $aiMoveStr"
+          
+          // Update history
+          moveHistory = moveHistory.take(historyIndex + 1) + aiMoveStr
+          historyIndex++
+          
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
           statusText = if (currentMode == GameMode.USER_BLACK || currentMode == GameMode.USER_WHITE) "Your turn." else "Next move..."
         } else if (aiMoveStr == "PASS") {
@@ -173,16 +191,75 @@ class GameFragment : Fragment() {
       }
     }
 
+    suspend fun startNewGame(mode: GameMode, h: Int, m: String) {
+      isThinking = true
+      
+      if (m != currentModelName) {
+        statusText = "Re-initializing engine with $m..."
+        bridge.shutdown()
+        val res = initEngine(m)
+        if (res != 0) {
+          statusText = "Engine Init Failed: $res"
+          isThinking = false
+          return
+        }
+        currentModelName = m
+      }
+
+      statusText = "Starting new game..."
+      withContext(Dispatchers.IO) {
+        bridge.sendGtpCommand("clear_board")
+        if (h > 0) {
+          bridge.sendGtpCommand("fixed_handicap $h")
+        }
+      }
+      
+      boardState = syncBoardState(bridge)
+      
+      // If handicap stones were placed, they appear in moveHistory in the engine.
+      // However, we want to reflect them in our UI's moveHistory too.
+      val newMoveHistory = if (h > 0) {
+        // Find which spots have black stones after fixed_handicap
+        val hStones = mutableListOf<String>()
+        for (r in 0 until boardSize) {
+          for (c in 0 until boardSize) {
+            if (boardState[r][c] == Stone.BLACK) {
+              hStones.add(toGtpCoords(c, r))
+            }
+          }
+        }
+        hStones
+      } else {
+        emptyList<String>()
+      }
+
+      previewMove = null
+      lastMove = null
+      moveHistory = newMoveHistory
+      historyIndex = newMoveHistory.size - 1
+      analysis = AnalysisResult()
+      currentMode = mode
+      handicap = h
+      aiAutoPlay = false
+      isThinking = false
+      
+      // KataGo sets turn to White after handicap
+      currentTurn = if (h > 0) Stone.WHITE else Stone.BLACK
+      statusText = if (h > 0) "Handicap set. White's turn." else "Board cleared. Black's turn."
+      lastMoveText = "No moves yet"
+
+      if (currentMode == GameMode.USER_WHITE || (currentMode == GameMode.AI_BOTH) || (h > 0 && currentMode == GameMode.USER_BLACK)) {
+        handleAiMove(currentTurn)
+      }
+    }
+
     LaunchedEffect(Unit) {
       statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
-      val result = initEngine()
+      val result = initEngine(currentModelName)
       if (result == 0) {
         isEngineInitialized = true
-        statusText = "Ready. Black's turn."
-
-        if (currentMode == GameMode.USER_WHITE) {
-          handleAiMove(Stone.BLACK)
-        }
+        statusText = "Engine ready."
+        showSettings = true
       } else {
         statusText = "Engine Init Failed: $result"
       }
@@ -196,52 +273,6 @@ class GameFragment : Fragment() {
           contentColor = MaterialTheme.colors.onPrimary,
           elevation = 4.dp,
           actions = {
-            Box {
-              IconButton(onClick = { menuExpanded = true }) {
-                Icon(
-                  imageVector = Icons.Default.Settings, // Changed from Visibility to Settings
-                  contentDescription = "Select Mode"
-                )
-              }
-              DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false }
-              ) {
-                GameMode.values().forEach { mode ->
-                  DropdownMenuItem(onClick = {
-                    currentMode = mode
-                    menuExpanded = false
-                    aiAutoPlay = false
-                    // If switching to Mode 2 (User is White) and board is empty, AI starts
-                    if (mode == GameMode.USER_WHITE && boardState.all { row -> row.all { it == Stone.EMPTY } }) {
-                      scope.launch { handleAiMove(Stone.BLACK) }
-                    }
-                  }) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (currentMode == mode) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
-                                tint = MaterialTheme.colors.primary,
-                                modifier = Modifier.size(32.dp).padding(end = 8.dp)
-                            )
-                        } else {
-                            Spacer(modifier = Modifier.size(40.dp)) // 32 + 8
-                        }
-                        Text(text = when(mode) {
-                          GameMode.USER_BLACK -> "You are Black"
-                          GameMode.USER_WHITE -> "You are White"
-                          GameMode.USER_BOTH -> "You are Both"
-                          GameMode.AI_BOTH -> "AI vs AI"
-                        })
-                    }
-                  }
-                }
-              }
-            }
             IconButton(onClick = { showAnalysis = !showAnalysis }) {
               Icon(
                 imageVector = if (showAnalysis) Icons.Default.Visibility
@@ -520,17 +551,21 @@ class GameFragment : Fragment() {
                   // Draw Preview Stone (Ghost Stone)
                   previewMove?.let { (px, py) ->
                     val centerX = marginPx + px * stepPx
-                  val centerY = marginPx + py * stepPx
-                  drawCircle(
-                    color = Color.Black.copy(alpha = 0.4f),
-                    radius = stoneRadius,
-                    center = Offset(centerX, centerY)
-                  )
-                  drawCircle(
-                    color = Color.White.copy(alpha = 0.6f),
-                    radius = stoneRadius * 0.4f,
-                    center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
-                  )
+                    val centerY = marginPx + py * stepPx
+                    val previewColor = if (currentTurn == Stone.BLACK) Color.Black else Color.White
+                    
+                    drawCircle(
+                      color = previewColor.copy(alpha = 0.4f),
+                      radius = stoneRadius,
+                      center = Offset(centerX, centerY)
+                    )
+                    
+                    // Simple highlight for preview
+                    drawCircle(
+                      color = (if (currentTurn == Stone.BLACK) Color.White else Color.Black).copy(alpha = 0.2f),
+                      radius = stoneRadius * 0.4f,
+                      center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
+                    )
                   }
                 }
               }
@@ -545,21 +580,7 @@ class GameFragment : Fragment() {
               // New Game Button
               Button(
                 onClick = {
-                  scope.launch {
-                    bridge.sendGtpCommand("clear_board")
-                    boardState = syncBoardState(bridge)
-                    previewMove = null
-                    lastMove = null
-                    analysis = AnalysisResult()
-                    currentTurn = Stone.BLACK
-                    statusText = "Board cleared. Black's turn."
-                    lastMoveText = "No moves yet"
-                    aiAutoPlay = false
-
-                    if (currentMode == GameMode.USER_WHITE) {
-                      handleAiMove(Stone.BLACK)
-                    }
-                  }
+                  showSettings = true
                 },
                 modifier = Modifier.height(56.dp),
                 shape = RoundedCornerShape(28.dp),
@@ -569,6 +590,50 @@ class GameFragment : Fragment() {
                 )
               ) {
                 Text("NEW GAME", fontWeight = FontWeight.Bold)
+              }
+
+              // Undo Button
+              IconButton(
+                onClick = {
+                  if (historyIndex >= 0) {
+                    scope.launch {
+                      bridge.sendGtpCommand("undo")
+                      historyIndex--
+                      boardState = syncBoardState(bridge)
+                      currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                      lastMove = if (historyIndex >= 0) fromGtpCoords(moveHistory[historyIndex]) else null
+                      lastMoveText = if (historyIndex >= 0) "Undone. Last move: ${moveHistory[historyIndex]}" else "Undone to start"
+                      previewMove = null
+                    }
+                  }
+                },
+                enabled = historyIndex >= 0 && !isThinking,
+                modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
+              ) {
+                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
+              }
+
+              // Redo Button
+              IconButton(
+                onClick = {
+                  if (historyIndex < moveHistory.size - 1) {
+                    scope.launch {
+                      historyIndex++
+                      val moveStr = moveHistory[historyIndex]
+                      val color = if (currentTurn == Stone.BLACK) "black" else "white"
+                      bridge.sendGtpCommand("play $color $moveStr")
+                      boardState = syncBoardState(bridge)
+                      lastMove = fromGtpCoords(moveStr)
+                      lastMoveText = "Redone: $moveStr"
+                      currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                      previewMove = null
+                    }
+                  }
+                },
+                enabled = historyIndex < moveHistory.size - 1 && !isThinking,
+                modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
+              ) {
+                Icon(Icons.Default.Redo, contentDescription = "Redo", tint = MaterialTheme.colors.primary)
               }
 
               if (currentMode == GameMode.AI_BOTH) {
@@ -605,6 +670,11 @@ class GameFragment : Fragment() {
                           boardState = syncBoardState(bridge)
                           val colorStr = if (turnColor == Stone.BLACK) "Black" else "White"
                           lastMoveText = "$colorStr played $moveStr"
+                          
+                          // Update history
+                          moveHistory = moveHistory.take(historyIndex + 1) + moveStr
+                          historyIndex++
+
                           previewMove = null
                           lastMove = x to y
                           playMoveSound()
@@ -641,19 +711,121 @@ class GameFragment : Fragment() {
 
             Spacer(modifier = Modifier.height(32.dp))
           }
+
+          if (showSettings) {
+            AlertDialog(
+              onDismissRequest = { if (isEngineInitialized) showSettings = false },
+              title = { Text("Game Settings") },
+              text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                  Text("Model", style = MaterialTheme.typography.subtitle1)
+                  Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    RadioButton(
+                      selected = currentModelName == "model.bin.gz",
+                      onClick = { currentModelName = "model.bin.gz" }
+                    )
+                    Text("Mobile (10b)", modifier = Modifier.padding(start = 8.dp))
+                  }
+
+                  Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                  Text("Handicap", style = MaterialTheme.typography.subtitle1)
+                  Box(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(vertical = 8.dp)
+                      .height(64.dp)
+                  ) {
+                    androidx.compose.foundation.lazy.LazyRow(
+                      modifier = Modifier.fillMaxSize(),
+                      horizontalArrangement = Arrangement.spacedBy(8.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      items(10) { h ->
+                        val isSelected = handicap == h
+                        Surface(
+                          modifier = Modifier
+                            .size(width = 60.dp, height = 48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .pointerInput(h) {
+                              detectTapGestures { handicap = h }
+                            },
+                          color = if (isSelected) MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.3f),
+                          elevation = if (isSelected) 4.dp else 0.dp
+                        ) {
+                          Box(contentAlignment = Alignment.Center) {
+                            Text(
+                              text = if (h == 0) "None" else h.toString(),
+                              color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+                              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+                  Text("Play As", style = MaterialTheme.typography.subtitle1)
+                  GameMode.values().forEach { mode ->
+                    Row(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .pointerInput(Unit) {
+                          detectTapGestures { currentMode = mode }
+                        }
+                        .padding(vertical = 4.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      RadioButton(
+                        selected = currentMode == mode,
+                        onClick = { currentMode = mode }
+                      )
+                      Text(
+                        text = when(mode) {
+                          GameMode.USER_BLACK -> "You are Black"
+                          GameMode.USER_WHITE -> "You are White (Handicap)"
+                          GameMode.USER_BOTH -> "You are Both"
+                          GameMode.AI_BOTH -> "AI vs AI"
+                        },
+                        modifier = Modifier.padding(start = 8.dp)
+                      )
+                    }
+                  }
+                }
+              },
+              confirmButton = {
+                Button(
+                  onClick = {
+                    showSettings = false
+                    scope.launch {
+                      startNewGame(currentMode, handicap, currentModelName)
+                    }
+                  }
+                ) {
+                  Text("START")
+                }
+              }
+            )
+          }
     }
   }
 
-  private suspend fun initEngine(): Int = withContext(Dispatchers.IO) {
+  private suspend fun initEngine(modelName: String): Int = withContext(Dispatchers.IO) {
     try {
       val configPath = copyAssetToFile("gtp.cfg")
-      val modelPath = copyAssetToFile("model.bin.gz")
+      val modelPath = copyAssetToFile(modelName)
       if (configPath == null || modelPath == null) {
         Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
         return@withContext -4
       }
 
-      Log.i("GameFragment", "Starting KataGo Engine Init...")
+      Log.i("GameFragment", "Starting KataGo Engine Init with model $modelName...")
       val result = bridge.init(configPath, modelPath)
       Log.i("GameFragment", "Engine Init Result: $result")
       result
