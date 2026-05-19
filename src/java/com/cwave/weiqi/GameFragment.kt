@@ -76,6 +76,7 @@ class GameFragment : Fragment() {
   data class AnalysisResult(
     val winrate: Double = 0.5,
     val scoreLead: Double = 0.0,
+    val visits: Long = 0,
     val ownership: DoubleArray = DoubleArray(361) { 0.0 },
     val candidates: List<CandidateMove> = emptyList()
   )
@@ -190,7 +191,7 @@ class GameFragment : Fragment() {
 
     suspend fun handleAiMove(color: Stone) {
       isThinking = true
-      statusText = "KataGo is thinking..."
+      statusText = "AI is thinking..."
       genAiMove(color, bridge) { aiX, aiY, aiMoveStr ->
         isThinking = false
         boardState = syncBoardState(bridge)
@@ -219,7 +220,7 @@ class GameFragment : Fragment() {
             lastMoveText = "AI Resigned."
             finalScoreText = "$winner wins by resignation"
         } else {
-          statusText = "KataGo error."
+          statusText = "AI error."
         }
       }
     }
@@ -352,25 +353,26 @@ class GameFragment : Fragment() {
                     color = MaterialTheme.colors.onSurface
                   )
 
-                  val winratePercent = (analysis.winrate * 100).toInt()
-                  val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
-                  val leadText = if (analysis.scoreLead >= 0) "B+$scoreLeadFormatted" else "W+$scoreLeadFormatted"
+                  if (showAnalysis) {
+                    val winratePercent = (analysis.winrate * 100).toInt()
+                    val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
+                    // scoreLead in JSON is relative to the perspective player
+                    // If positive, perspective player is leading.
+                    val leadColor = if (analysis.scoreLead >= 0) {
+                        if (currentTurn == Stone.BLACK) "B" else "W"
+                    } else {
+                        if (currentTurn == Stone.BLACK) "W" else "B"
+                    }
+                    val leadText = "$leadColor+$scoreLeadFormatted"
 
-                  Text(
-                    text = "Winrate: $winratePercent% | Lead: $leadText",
-                    style = MaterialTheme.typography.h6,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colors.primary,
-                    modifier = Modifier.padding(top = 6.dp)
-                  )
-
-                  Text(
-                    text = lastMoveText,
-                    style = MaterialTheme.typography.subtitle1,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.8f),
-                    modifier = Modifier.padding(top = 6.dp)
-                  )
+                    Text(
+                      text = "Winrate: $winratePercent% | Lead: $leadText | Visits: ${analysis.visits}",
+                      style = MaterialTheme.typography.h6,
+                      fontWeight = FontWeight.ExtraBold,
+                      color = MaterialTheme.colors.primary,
+                      modifier = Modifier.padding(top = 6.dp)
+                    )
+                  }
 
                   Box(modifier = Modifier.height(12.dp).fillMaxWidth().padding(top = 10.dp)) {
                     if (isThinking) {
@@ -1212,8 +1214,10 @@ class GameFragment : Fragment() {
         val jsonStr = response.substring(1).trim()
         val json = JSONObject(jsonStr)
         val rootInfo = json.getJSONObject("rootInfo")
+        Log.d("GameFragment", "RootInfo: $rootInfo")
         val winrate = rootInfo.getDouble("winrate")
         val scoreLead = rootInfo.getDouble("scoreLead")
+        val visits = if (rootInfo.has("visits")) rootInfo.getLong("visits") else 0L
 
         val ownershipArray = json.getJSONArray("ownership")
         val ownership = DoubleArray(ownershipArray.length())
@@ -1240,8 +1244,8 @@ class GameFragment : Fragment() {
         }
 
         val topCandidates = candidates.sortedByDescending { it.visits }.take(5)
-        Log.i("GameFragment", "Analysis received: winrate=$winrate, candidates=${topCandidates.size}")
-        AnalysisResult(winrate, scoreLead, ownership, topCandidates)
+        Log.i("GameFragment", "Analysis received: winrate=$winrate, scoreLead=$scoreLead, visits=$visits, candidates=${topCandidates.size}")
+        AnalysisResult(winrate, scoreLead, visits, ownership, topCandidates)
       } catch (e: Exception) {
         Log.e("GameFragment", "Error parsing analysis: ${e.message}", e)
         AnalysisResult()

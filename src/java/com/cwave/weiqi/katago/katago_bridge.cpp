@@ -282,7 +282,8 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
             } catch (...) {}
         }
 
-        LOGI("AI starting thinking search (think) for %s with %ld visits...", colorStr.c_str(), (long)visits);
+        Player rootPla = bot->getRootPla();
+        LOGI("AI think: requested=%d, root=%d, visits=%ld", (int)pla, (int)rootPla, (long)visits);
         
         SearchParams oldParams = bot->getParams();
         SearchParams newParams = oldParams;
@@ -295,7 +296,7 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         bot->setParamsNoClearing(oldParams);
         
         LOGI("AI thinking search completed.");
-        return env->NewStringUTF("= ok");
+        return env->NewStringUTF("= ");
     }
 
     if (mainCmd == "play") {
@@ -310,7 +311,11 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         Loc moveLoc = Location::ofString(moveStr, bot->getRootBoard());
         if (moveLoc == Board::NULL_LOC && moveStr != "pass" && moveStr != "PASS") return env->NewStringUTF("? invalid move");
 
+        Player rootPla = bot->getRootPla();
+        LOGI("AI play: color=%d, move=%s, rootPla=%d", (int)pla, moveStr.c_str(), (int)rootPla);
+
         if (!bot->makeMove(moveLoc, pla)) {
+            LOGE("AI play failed! illegal move or turn mismatch");
             return env->NewStringUTF("? illegal move");
         }
         return env->NewStringUTF("= ");
@@ -324,6 +329,7 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         Player pla = P_BLACK;
         BoardHistory hist(board, pla, rules, 0);
         bot->setPosition(pla, board, hist);
+        LOGI("AI clear_board: board reset to 19x19, black to move");
         return env->NewStringUTF("= ");
     }
 
@@ -419,6 +425,9 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
             if (pStr == "black" || pStr == "b") perspective = P_BLACK;
             else if (pStr == "white" || pStr == "w") perspective = P_WHITE;
         }
+
+        Player rootPla = bot->getRootPla();
+        LOGI("AI kata-get-analysis: perspective=%d, root=%d", (int)perspective, (int)rootPla);
 
         bool success = bot->getSearch()->getAnalysisJson(
             perspective,
