@@ -472,7 +472,7 @@ ComputeContext* NeuralNet::createComputeContext(
     enabled_t testFP16Mode = useFP16Mode;
     enabled_t testFP16StorageMode = useFP16Mode;
     enabled_t testFP16ComputeMode = enabled_t::Auto;
-    enabled_t testFP16TensorCoresMode = enabled_t::Auto;
+    enabled_t testFP16TensorCoresMode = enabled_t::False;
 
     return OpenCLTuner::loadOrAutoTune(
       openCLTunerFile,homeDataDirOverride,name,gpuIdxForTuning,logger,openCLReTunePerBoardSize,
