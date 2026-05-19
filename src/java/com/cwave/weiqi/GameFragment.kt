@@ -120,6 +120,8 @@ class GameFragment : Fragment() {
 
     var moveHistory by remember { mutableStateOf(listOf<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
+    var consecutivePasses by remember { mutableStateOf(0) }
+    var finalScoreText by remember { mutableStateOf<String?>(null) }
 
     // Automatically update analysis when turn changes or analysis is toggled ON
     LaunchedEffect(currentTurn, showAnalysis) {
@@ -172,6 +174,17 @@ class GameFragment : Fragment() {
       }
     }
 
+    suspend fun checkGameEnd() {
+      if (consecutivePasses >= 2) {
+        statusText = "Game ended by two passes. Scoring..."
+        val score = bridge.sendGtpCommand("final_score")
+        if (score.startsWith("=")) {
+          finalScoreText = score.substring(1).trim()
+          statusText = "Game Over. Result: $finalScoreText"
+        }
+      }
+    }
+
     suspend fun handleAiMove(color: Stone) {
       isThinking = true
       statusText = "KataGo is thinking..."
@@ -187,13 +200,21 @@ class GameFragment : Fragment() {
           // Update history
           moveHistory = moveHistory.take(historyIndex + 1) + aiMoveStr
           historyIndex++
+          consecutivePasses = 0
           
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
           statusText = if (currentMode == GameMode.USER_BLACK || currentMode == GameMode.USER_WHITE) "Your turn." else "Next move..."
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
+          consecutivePasses++
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
           statusText = "AI passed."
+          scope.launch { checkGameEnd() }
+        } else if (aiMoveStr.lowercase() == "resign") {
+            val winner = if (color == Stone.BLACK) "White" else "Black"
+            statusText = "AI Resigned. $winner wins!"
+            lastMoveText = "AI Resigned."
+            finalScoreText = "$winner wins by resignation"
         } else {
           statusText = "KataGo error."
         }
@@ -246,6 +267,8 @@ class GameFragment : Fragment() {
       lastMove = null
       moveHistory = newMoveHistory
       historyIndex = newMoveHistory.size - 1
+      consecutivePasses = 0
+      finalScoreText = null
       analysis = AnalysisResult()
       currentMode = mode
       handicap = h
@@ -571,10 +594,11 @@ class GameFragment : Fragment() {
               }
             }
 
-            // --- Top Row: Place / Auto Button ---
-            Box(
+            // --- Top Row: Place / Pass / Auto Button ---
+            Row(
               modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-              contentAlignment = Alignment.Center
+              horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+              verticalAlignment = Alignment.CenterVertically
             ) {
               if (currentMode == GameMode.AI_BOTH) {
                 // Autoplay Toggle for Mode 4
@@ -597,6 +621,42 @@ class GameFragment : Fragment() {
                   }
                 }
               } else {
+                // Pass Button
+                Button(
+                  onClick = {
+                    scope.launch {
+                        val color = if (currentTurn == Stone.BLACK) "black" else "white"
+                        bridge.sendGtpCommand("play $color pass")
+                        consecutivePasses++
+                        val colorStr = if (currentTurn == Stone.BLACK) "Black" else "White"
+                        lastMoveText = "$colorStr passed."
+                        currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                        
+                        checkGameEnd()
+
+                        if (finalScoreText == null) {
+                            if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
+                                handleAiMove(Stone.WHITE)
+                            } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
+                                handleAiMove(Stone.BLACK)
+                            }
+                        }
+                    }
+                  },
+                  enabled = !isThinking && finalScoreText == null && (
+                    currentMode == GameMode.USER_BOTH ||
+                    (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
+                    (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
+                  ),
+                  modifier = Modifier.height(56.dp).width(80.dp),
+                  shape = RoundedCornerShape(28.dp),
+                  colors = ButtonDefaults.buttonColors(
+                    backgroundColor = Color.LightGray.copy(alpha = 0.5f)
+                  )
+                ) {
+                  Text("PASS", fontWeight = FontWeight.Bold)
+                }
+
                 // Place Button (Circular)
                 Button(
                   onClick = {
@@ -611,6 +671,7 @@ class GameFragment : Fragment() {
                           lastMoveText = "$colorStr played $moveStr"
                           moveHistory = moveHistory.take(historyIndex + 1) + moveStr
                           historyIndex++
+                          consecutivePasses = 0
                           previewMove = null
                           lastMove = x to y
                           playMoveSound()
@@ -629,7 +690,7 @@ class GameFragment : Fragment() {
                       }
                     }
                   },
-                  enabled = previewMove != null && !isThinking && (
+                  enabled = previewMove != null && !isThinking && finalScoreText == null && (
                     currentMode == GameMode.USER_BOTH ||
                     (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
                     (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
@@ -923,6 +984,40 @@ class GameFragment : Fragment() {
                   }
                 }
               }
+            )
+          }
+
+          if (finalScoreText != null) {
+            AlertDialog(
+                onDismissRequest = { /* Don't dismiss by clicking outside */ },
+                title = { Text("Game Over", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text("The game has ended.", style = MaterialTheme.typography.body1)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Result: ${finalScoreText}",
+                            style = MaterialTheme.typography.h6,
+                            color = MaterialTheme.colors.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            finalScoreText = null
+                            showSettings = true
+                        }
+                    ) {
+                        Text("NEW GAME")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { finalScoreText = null }) {
+                        Text("CLOSE")
+                    }
+                }
             )
           }
     }

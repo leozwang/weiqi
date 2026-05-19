@@ -362,6 +362,38 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         return env->NewStringUTF("= ");
     }
 
+    if (mainCmd == "final_score") {
+        bot->stopAndWait();
+        const BoardHistory& rootHist = bot->getRootHist();
+        Player winner = C_EMPTY;
+        double score = 0.0;
+
+        if (rootHist.isGameFinished) {
+            winner = rootHist.winner;
+            score = rootHist.finalWhiteMinusBlackScore;
+        } else {
+            // Game not finished, estimate lead
+            // Copy history because computeLead takes non-const ref
+            BoardHistory histCopy = rootHist;
+            score = PlayUtils::computeLead(
+                bot->getSearchStopAndWait(),
+                NULL,
+                bot->getRootBoard(),
+                histCopy,
+                bot->getRootPla(),
+                100, // visits
+                OtherGameProperties()
+            );
+            winner = score > 0 ? P_WHITE : (score < 0 ? P_BLACK : C_EMPTY);
+        }
+
+        std::string resp = "= ";
+        if (winner == C_EMPTY) resp += "0";
+        else if (winner == P_BLACK) resp += "B+" + Global::strprintf("%.1f", -score);
+        else if (winner == P_WHITE) resp += "W+" + Global::strprintf("%.1f", score);
+        return env->NewStringUTF(resp.c_str());
+    }
+
     if (mainCmd == "kata-get-analysis") {
         nlohmann::json json;
         // perspective: P_BLACK is usually 1, P_WHITE is 2 in KataGo
