@@ -16,15 +16,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.*
@@ -117,6 +117,7 @@ class GameFragment : Fragment() {
     var showSettings by remember { mutableStateOf(false) }
     var handicap by remember { mutableStateOf(0) }
     var currentModelName by remember { mutableStateOf("model.bin.gz") }
+    var currentVisits by remember { mutableStateOf(1000) }
 
     var moveHistory by remember { mutableStateOf(listOf<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
@@ -139,7 +140,9 @@ class GameFragment : Fragment() {
                 // We use a local busy check if needed, but since we are in a LaunchedEffect 
                 // keyed by currentTurn, it won't run multiple times for the same turn.
                 statusText = "Analyzing position..."
-                bridge.sendGtpCommand("think $colorStr 400")
+                // Use a fraction of currentVisits for analysis to keep it fast
+                val analysisVisits = (currentVisits * 0.4).toInt().coerceIn(100, 1000)
+                bridge.sendGtpCommand("think $colorStr $analysisVisits")
                 statusText = "Your turn."
             }
         }
@@ -221,7 +224,7 @@ class GameFragment : Fragment() {
       }
     }
 
-    suspend fun startNewGame(mode: GameMode, h: Int, m: String) {
+    suspend fun startNewGame(mode: GameMode, h: Int, m: String, v: Int) {
       isThinking = true
       
       if (m != currentModelName) {
@@ -239,6 +242,7 @@ class GameFragment : Fragment() {
       statusText = "Starting new game..."
       withContext(Dispatchers.IO) {
         bridge.sendGtpCommand("clear_board")
+        bridge.sendGtpCommand("set_max_visits $v")
         if (h > 0) {
           bridge.sendGtpCommand("fixed_handicap $h")
         }
@@ -272,6 +276,7 @@ class GameFragment : Fragment() {
       analysis = AnalysisResult()
       currentMode = mode
       handicap = h
+      currentVisits = v
       aiAutoPlay = false
       isThinking = false
       
@@ -728,7 +733,7 @@ class GameFragment : Fragment() {
                 enabled = historyIndex >= 0 && !isThinking,
                 modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
               ) {
-                Icon(Icons.Default.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
+                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
               }
 
               // New Game Button
@@ -765,7 +770,7 @@ class GameFragment : Fragment() {
                 enabled = historyIndex < moveHistory.size - 1 && !isThinking,
                 modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
               ) {
-                Icon(Icons.Default.Redo, contentDescription = "Redo", tint = MaterialTheme.colors.primary)
+                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", tint = MaterialTheme.colors.primary)
               }
             }
 
@@ -883,6 +888,64 @@ class GameFragment : Fragment() {
 
                   Spacer(modifier = Modifier.height(24.dp))
 
+                  // --- AI Strength Selection ---
+                  Text(
+                    "AI STRENGTH",
+                    style = MaterialTheme.typography.overline,
+                    color = MaterialTheme.colors.primary,
+                    fontWeight = FontWeight.Bold
+                  )
+                  Spacer(Modifier.height(8.dp))
+                  
+                  val levels = listOf(
+                    "Easy" to 100,
+                    "Amateur" to 500,
+                    "Advanced" to 1000,
+                    "Pro" to 2500
+                  )
+                  
+                  androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                  ) {
+                    items(levels.size) { index ->
+                      val (label, v) = levels[index]
+                      val isSelected = currentVisits == v
+                      Surface(
+                        modifier = Modifier
+                          .size(width = 100.dp, height = 56.dp)
+                          .clip(RoundedCornerShape(16.dp))
+                          .pointerInput(v) {
+                            detectTapGestures { currentVisits = v }
+                          },
+                        color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
+                        elevation = if (isSelected) 6.dp else 0.dp,
+                        border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
+                      ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                          Text(
+                            text = label,
+                            color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+                            style = MaterialTheme.typography.button,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                          )
+                          Text(
+                            text = "$v visits",
+                            color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
+                            style = MaterialTheme.typography.caption
+                          )
+                        }
+                      }
+                    }
+                  }
+
+                  Spacer(modifier = Modifier.height(24.dp))
+
                   // --- Mode Selection ---
                   Text(
                     "PLAY AS",
@@ -962,7 +1025,7 @@ class GameFragment : Fragment() {
                   onClick = {
                     showSettings = false
                     scope.launch {
-                      startNewGame(currentMode, handicap, currentModelName)
+                      startNewGame(currentMode, handicap, currentModelName, currentVisits)
                     }
                   },
                   shape = RoundedCornerShape(24.dp),

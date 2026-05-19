@@ -36,7 +36,7 @@ class ThreadSafeContainer
   inline ThreadSafeContainer(size_t maxSz)
     :maxSize(maxSz),closed(false),readOnly(false),mutex(),notEmptyCondVar(),notFullCondVar()
   {}
-  inline ~ThreadSafeContainer()
+  inline virtual ~ThreadSafeContainer()
   {}
 
   ThreadSafeContainer(const ThreadSafeContainer&) = delete;

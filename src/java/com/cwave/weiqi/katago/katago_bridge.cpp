@@ -251,6 +251,22 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         return env->NewStringUTF(("= " + moveStr).c_str());
     }
 
+    if (mainCmd == "set_max_visits") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing visits");
+        int64_t v = 400;
+        try {
+            v = std::stoll(parts[1]);
+        } catch (...) {
+            return env->NewStringUTF("? invalid visits");
+        }
+        SearchParams params = bot->getParams();
+        params.maxVisits = v;
+        params.maxPlayouts = v;
+        bot->setParams(params);
+        LOGI("AI max visits updated to %ld", (long)v);
+        return env->NewStringUTF("= ok");
+    }
+
     if (mainCmd == "think") {
         if (parts.size() < 2) return env->NewStringUTF("? missing color");
         std::string colorStr = parts[1];
