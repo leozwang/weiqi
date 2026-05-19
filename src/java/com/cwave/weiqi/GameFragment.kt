@@ -303,8 +303,8 @@ class GameFragment : Fragment() {
             Box(
               modifier = Modifier
                 .fillMaxWidth()
-                .height(180.dp)
-                .padding(10.dp),
+                .height(150.dp)
+                .padding(horizontal = 10.dp, vertical = 4.dp),
               contentAlignment = Alignment.Center
             ) {
               Card(
@@ -313,7 +313,7 @@ class GameFragment : Fragment() {
                 shape = RoundedCornerShape(20.dp)
               ) {
                 Column(
-                  modifier = Modifier.padding(12.dp),
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                   horizontalAlignment = Alignment.CenterHorizontally,
                   verticalArrangement = Arrangement.Center
                 ) {
@@ -367,10 +367,9 @@ class GameFragment : Fragment() {
                 modifier = Modifier
                   .aspectRatio(1f)
                   .fillMaxWidth()
-                  .padding(horizontal = 4.dp)
                   .background(Color(0xFFDCB35C))
               ) {
-                val boardMargin = 0.04f
+                val boardMargin = 0.03f
 
                 Canvas(
                   modifier = Modifier
