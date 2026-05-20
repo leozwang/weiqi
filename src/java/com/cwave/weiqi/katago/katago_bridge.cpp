@@ -227,6 +227,38 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
     if (mainCmd == "version") return env->NewStringUTF(Version::getKataGoVersion().c_str());
     if (mainCmd == "protocol_version") return env->NewStringUTF("= 2");
 
+    if (mainCmd == "komi") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing value");
+        float k = 7.5f;
+        try {
+            k = std::stof(parts[1]);
+        } catch (...) {
+            return env->NewStringUTF("? invalid value");
+        }
+        bot->setKomiIfNew(k);
+        LOGI("Komi updated to %.1f", k);
+        return env->NewStringUTF("= ");
+    }
+
+    if (mainCmd == "boardsize") {
+        if (parts.size() < 2) return env->NewStringUTF("? missing size");
+        int s = 19;
+        try {
+            s = std::stoi(parts[1]);
+        } catch (...) {
+            return env->NewStringUTF("? invalid size");
+        }
+        if (s < 7 || s > 19) return env->NewStringUTF("? unsupported size");
+
+        Rules rules = bot->getRootHist().rules;
+        Board board(s, s);
+        Player pla = P_BLACK;
+        BoardHistory hist(board, pla, rules, 0);
+        bot->setPosition(pla, board, hist);
+        LOGI("Board size changed to %dx%d", s, s);
+        return env->NewStringUTF("= ");
+    }
+
     if (mainCmd == "genmove") {
         if (parts.size() < 2) return env->NewStringUTF("? missing color");
         std::string colorStr = parts[1];
@@ -377,7 +409,7 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         Rules rules = hist.rules;
         BoardHistory newHist(board, pla, rules, hist.initialEncorePhase);
 
-        for (size_t i = 0; i < hist.moveHistory.size() - 1; i++) {
+        for (size_t i = 0; i < (int)hist.moveHistory.size() - 1; i++) {
             newHist.makeBoardMoveAssumeLegal(board, hist.moveHistory[i].loc, hist.moveHistory[i].pla, nullptr);
         }
         bot->setPosition(newHist.presumedNextMovePla, board, newHist);
@@ -387,27 +419,23 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
     if (mainCmd == "final_score") {
         bot->stopAndWait();
         const BoardHistory& rootHist = bot->getRootHist();
-        Player winner = C_EMPTY;
-        double score = 0.0;
-
-        if (rootHist.isGameFinished) {
-            winner = rootHist.winner;
-            score = rootHist.finalWhiteMinusBlackScore;
-        } else {
-            // Game not finished, estimate lead
-            // Copy history because computeLead takes non-const ref
-            BoardHistory histCopy = rootHist;
-            score = PlayUtils::computeLead(
-                bot->getSearchStopAndWait(),
-                NULL,
-                bot->getRootBoard(),
-                histCopy,
-                bot->getRootPla(),
-                100, // visits
-                OtherGameProperties()
-            );
-            winner = score > 0 ? P_WHITE : (score < 0 ? P_BLACK : C_EMPTY);
-        }
+        
+        LOGI("Calculating final score with computeLead...");
+        // Use computeLead even if game is finished to account for dead stones and unfilled dame.
+        // It provides a much more human-expected "judged" score.
+        BoardHistory histCopy = rootHist;
+        float score = PlayUtils::computeLead(
+            bot->getSearchStopAndWait(),
+            NULL,
+            bot->getRootBoard(),
+            histCopy,
+            P_WHITE, // Always from White's perspective (returns White - Black)
+            500,     // 500 visits for a reliable estimate
+            OtherGameProperties()
+        );
+        
+        LOGI("Final score lead (W-B): %.1f", score);
+        Player winner = score > 0 ? P_WHITE : (score < 0 ? P_BLACK : C_EMPTY);
 
         std::string resp = "= ";
         if (winner == C_EMPTY) resp += "0";
@@ -449,7 +477,8 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         return env->NewStringUTF(("= " + jsonStr).c_str());
     }
 
-    return env->NewStringUTF("= ok");
+    LOGE("Unknown GTP command: %s", mainCmd.c_str());
+    return env->NewStringUTF(("? unknown command " + mainCmd).c_str());
 }
 
 extern "C" JNIEXPORT jintArray JNICALL

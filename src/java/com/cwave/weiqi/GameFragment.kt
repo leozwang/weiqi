@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -144,7 +145,7 @@ class GameFragment : Fragment() {
                 // Use a fraction of currentVisits for analysis to keep it fast
                 val analysisVisits = (currentVisits * 0.4).toInt().coerceIn(100, 1000)
                 bridge.sendGtpCommand("think $colorStr $analysisVisits")
-                statusText = "Your turn."
+                statusText = "Turn."
             }
         }
         
@@ -207,12 +208,12 @@ class GameFragment : Fragment() {
           consecutivePasses = 0
           
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
-          statusText = if (currentMode == GameMode.USER_BLACK || currentMode == GameMode.USER_WHITE) "Your turn." else "Next move..."
+          statusText = "Turn."
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
           consecutivePasses++
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
-          statusText = "AI passed."
+          statusText = "Turn."
           scope.launch { checkGameEnd() }
         } else if (aiMoveStr.lowercase() == "resign") {
             val winner = if (color == Stone.BLACK) "White" else "Black"
@@ -244,6 +245,10 @@ class GameFragment : Fragment() {
       withContext(Dispatchers.IO) {
         bridge.sendGtpCommand("clear_board")
         bridge.sendGtpCommand("set_max_visits $v")
+        
+        val komi = if (h > 0) 0.5 else 7.5
+        bridge.sendGtpCommand("komi $komi")
+
         if (h > 0) {
           bridge.sendGtpCommand("fixed_handicap $h")
         }
@@ -283,7 +288,7 @@ class GameFragment : Fragment() {
       
       // KataGo sets turn to White after handicap
       currentTurn = if (h > 0) Stone.WHITE else Stone.BLACK
-      statusText = if (h > 0) "Handicap set. White's turn." else "Board cleared. Black's turn."
+      statusText = "Turn."
       lastMoveText = "No moves yet"
 
       if (currentMode == GameMode.USER_WHITE || (currentMode == GameMode.AI_BOTH) || (h > 0 && currentMode == GameMode.USER_BLACK)) {
@@ -332,55 +337,78 @@ class GameFragment : Fragment() {
             Box(
               modifier = Modifier
                 .fillMaxWidth()
-                .height(150.dp)
+                .height(100.dp)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
               contentAlignment = Alignment.Center
             ) {
               Card(
                 modifier = Modifier.fillMaxSize(),
-                elevation = 6.dp,
-                shape = RoundedCornerShape(20.dp)
+                elevation = 4.dp,
+                shape = RoundedCornerShape(16.dp)
               ) {
                 Column(
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
+                  modifier = Modifier.fillMaxSize(),
                   verticalArrangement = Arrangement.Center
                 ) {
-                  Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.h5,
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colors.onSurface
-                  )
-
-                  if (showAnalysis) {
-                    val winratePercent = (analysis.winrate * 100).toInt()
-                    val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
-                    // scoreLead in JSON is relative to the perspective player
-                    // If positive, perspective player is leading.
-                    val leadColor = if (analysis.scoreLead >= 0) {
-                        if (currentTurn == Stone.BLACK) "B" else "W"
-                    } else {
-                        if (currentTurn == Stone.BLACK) "W" else "B"
-                    }
-                    val leadText = "$leadColor+$scoreLeadFormatted"
-
-                    Text(
-                      text = "Winrate: $winratePercent% | Lead: $leadText | Visits: ${analysis.visits}",
-                      style = MaterialTheme.typography.h6,
-                      fontWeight = FontWeight.ExtraBold,
-                      color = MaterialTheme.colors.primary,
-                      modifier = Modifier.padding(top = 6.dp)
-                    )
-                  }
-
-                  Box(modifier = Modifier.height(12.dp).fillMaxWidth().padding(top = 10.dp)) {
-                    if (isThinking) {
-                      LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colors.secondary
+                  Row(
+                    modifier = Modifier.padding(horizontal = 12.dp).weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                  ) {
+                    if (isEngineInitialized && finalScoreText == null) {
+                      Box(
+                        modifier = Modifier
+                          .size(50.dp)
+                          .clip(CircleShape)
+                          .background(if (currentTurn == Stone.BLACK) Color.Black else Color.White)
+                          .border(
+                            width = if (currentTurn == Stone.WHITE) 2.dp else 0.dp,
+                            color = if (currentTurn == Stone.WHITE) Color.Gray else Color.Transparent,
+                            shape = CircleShape
+                          )
                       )
                     }
+                    
+                    if (finalScoreText != null) {
+                      if (isEngineInitialized) Spacer(Modifier.width(16.dp))
+                      Text(
+                        text = "Game Over",
+                        style = MaterialTheme.typography.h4,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colors.onSurface
+                      )
+                    }
+
+                    if (showAnalysis && finalScoreText == null) {
+                      val winratePercent = (analysis.winrate * 100).toInt()
+                      val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
+                      val leadColor = if (analysis.scoreLead >= 0) {
+                          if (currentTurn == Stone.BLACK) "B" else "W"
+                      } else {
+                          if (currentTurn == Stone.BLACK) "W" else "B"
+                      }
+                      val leadText = "$leadColor+$scoreLeadFormatted"
+
+                      Spacer(Modifier.width(12.dp))
+                      Divider(modifier = Modifier.height(20.dp).width(1.dp), color = Color.Gray.copy(alpha = 0.5f))
+                      Spacer(Modifier.width(12.dp))
+
+                      Text(
+                        text = "$winratePercent% | $leadText pts",
+                        style = MaterialTheme.typography.h5,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colors.primary
+                      )
+                    }
+                  }
+
+                  if (isThinking) {
+                    LinearProgressIndicator(
+                      modifier = Modifier.fillMaxWidth().height(4.dp),
+                      color = MaterialTheme.colors.secondary
+                    )
+                  } else {
+                    Spacer(Modifier.height(4.dp))
                   }
                 }
               }
@@ -397,7 +425,7 @@ class GameFragment : Fragment() {
                 modifier = Modifier
                   .aspectRatio(1f)
                   .fillMaxWidth()
-                  .background(Color(0xFFDCB35C))
+                  .background(Color(0xFFFFCC66))
               ) {
                 val boardMargin = 0.03f
 
@@ -577,22 +605,22 @@ class GameFragment : Fragment() {
                     val previewColor = if (currentTurn == Stone.BLACK) Color.Black else Color.White
                     
                     drawCircle(
-                      color = previewColor.copy(alpha = 0.5f),
+                      color = previewColor.copy(alpha = 0.7f),
                       radius = stoneRadius,
                       center = Offset(centerX, centerY)
                     )
 
                     // Add a distinct border for the preview stone
                     drawCircle(
-                      color = if (currentTurn == Stone.BLACK) Color.White.copy(alpha = 0.3f) else Color.Black.copy(alpha = 0.5f),
+                      color = if (currentTurn == Stone.BLACK) Color.White.copy(alpha = 0.4f) else Color.Black.copy(alpha = 0.8f),
                       radius = stoneRadius,
                       center = Offset(centerX, centerY),
-                      style = Stroke(width = 1.dp.toPx())
+                      style = Stroke(width = 1.5.dp.toPx())
                     )
                     
                     // Highlight
                     drawCircle(
-                      color = (if (currentTurn == Stone.BLACK) Color.White else Color.Black).copy(alpha = 0.2f),
+                      color = (if (currentTurn == Stone.BLACK) Color.White else Color.Black).copy(alpha = 0.3f),
                       radius = stoneRadius * 0.4f,
                       center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
                     )
@@ -688,7 +716,7 @@ class GameFragment : Fragment() {
                           } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
                             scope.launch { handleAiMove(Stone.BLACK) }
                           } else {
-                            statusText = "Your turn."
+                            statusText = "Turn."
                           }
                         } else {
                           statusText = "Illegal move at ${toGtpCoords(x, y)}"
