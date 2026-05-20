@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.*
@@ -1101,17 +1102,49 @@ class GameFragment : Fragment() {
           if (finalScoreText != null) {
             AlertDialog(
                 onDismissRequest = { /* Don't dismiss by clicking outside */ },
-                title = { Text("Game Over", fontWeight = FontWeight.Bold) },
+                shape = RoundedCornerShape(28.dp),
+                backgroundColor = MaterialTheme.colors.surface,
+                title = {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                      imageVector = Icons.Default.Stars,
+                      contentDescription = null,
+                      tint = Color(0xFFFFD700), // Gold
+                      modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                      text = "Game Over",
+                      style = MaterialTheme.typography.h5,
+                      fontWeight = FontWeight.ExtraBold,
+                      color = MaterialTheme.colors.onSurface
+                    )
+                  }
+                },
                 text = {
-                    Column {
-                        Text("The game has ended.", style = MaterialTheme.typography.body1)
-                        Spacer(Modifier.height(8.dp))
+                    Column(
+                      modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            text = "Result: ${finalScoreText}",
-                            style = MaterialTheme.typography.h6,
-                            color = MaterialTheme.colors.primary,
-                            fontWeight = FontWeight.Bold
+                          text = "The game has concluded.",
+                          style = MaterialTheme.typography.body1,
+                          color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
                         )
+                        Spacer(Modifier.height(16.dp))
+                        Surface(
+                          color = MaterialTheme.colors.primary.copy(alpha = 0.1f),
+                          shape = RoundedCornerShape(16.dp),
+                          border = BorderStroke(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.2f))
+                        ) {
+                          Text(
+                            text = finalScoreText ?: "",
+                            style = MaterialTheme.typography.h4,
+                            color = MaterialTheme.colors.primary,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+                          )
+                        }
                     }
                 },
                 confirmButton = {
@@ -1119,14 +1152,20 @@ class GameFragment : Fragment() {
                         onClick = {
                             finalScoreText = null
                             showSettings = true
-                        }
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        elevation = ButtonDefaults.elevation(0.dp, 0.dp),
+                        modifier = Modifier.padding(8.dp).fillMaxWidth().height(48.dp)
                     ) {
-                        Text("NEW GAME")
+                        Text("NEW GAME", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { finalScoreText = null }) {
-                        Text("CLOSE")
+                    TextButton(
+                      onClick = { finalScoreText = null },
+                      modifier = Modifier.padding(8.dp).fillMaxWidth().height(48.dp)
+                    ) {
+                      Text("BACK TO BOARD", fontWeight = FontWeight.Bold, color = Color.Gray)
                     }
                 }
             )
