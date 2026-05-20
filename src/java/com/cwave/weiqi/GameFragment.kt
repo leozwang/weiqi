@@ -603,16 +603,17 @@ class GameFragment : Fragment() {
                     val centerX = marginPx + px * stepPx
                     val centerY = marginPx + py * stepPx
                     val previewColor = if (currentTurn == Stone.BLACK) Color.Black else Color.White
+                    val previewAlpha = if (currentTurn == Stone.BLACK) 0.45f else 0.75f
                     
                     drawCircle(
-                      color = previewColor.copy(alpha = 0.7f),
+                      color = previewColor.copy(alpha = previewAlpha),
                       radius = stoneRadius,
                       center = Offset(centerX, centerY)
                     )
 
                     // Add a distinct border for the preview stone
                     drawCircle(
-                      color = if (currentTurn == Stone.BLACK) Color.White.copy(alpha = 0.4f) else Color.Black.copy(alpha = 0.8f),
+                      color = if (currentTurn == Stone.BLACK) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.8f),
                       radius = stoneRadius,
                       center = Offset(centerX, centerY),
                       style = Stroke(width = 1.5.dp.toPx())
