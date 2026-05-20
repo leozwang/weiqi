@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -181,11 +182,17 @@ class GameFragment : Fragment() {
 
     suspend fun checkGameEnd() {
       if (consecutivePasses >= 2) {
-        statusText = "Game ended by two passes. Scoring..."
-        val score = bridge.sendGtpCommand("final_score")
-        if (score.startsWith("=")) {
-          finalScoreText = score.substring(1).trim()
-          statusText = "Game Over. Result: $finalScoreText"
+        statusText = "Game ended. Scoring..."
+        isThinking = true
+        withContext(Dispatchers.IO) {
+          val score = bridge.sendGtpCommand("final_score")
+          if (score.startsWith("=")) {
+            finalScoreText = score.substring(1).trim()
+            statusText = "Game Over"
+            // Fetch final analysis for territory display
+            analysis = getAnalysis(bridge, currentTurn)
+          }
+          isThinking = false
         }
       }
     }
@@ -482,20 +489,33 @@ class GameFragment : Fragment() {
                     }
                   }
 
-                  if (showAnalysis) {
-                    // Draw Ownership Dots (Territory Analysis)
+                  if (showAnalysis || finalScoreText != null) {
+                    // Draw Ownership Dots/Squares (Territory Analysis)
                     for (row in 0 until boardSize) {
                       for (col in 0 until boardSize) {
                         val score = analysis.ownership[row * boardSize + col]
                         if (abs(score) > 0.1) {
                           val centerX = marginPx + col * stepPx
                           val centerY = marginPx + row * stepPx
-                          drawCircle(
-                            color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
-                            else Color.White.copy(alpha = (-score * 0.4).toFloat()),
-                              radius = 3.dp.toPx(),
-                            center = Offset(centerX, centerY)
-                          )
+                          
+                          if (finalScoreText != null) {
+                            // Draw final territory as small squares
+                            val squareSize = stepPx * 0.45f
+                            drawRect(
+                              color = if (score > 0) Color.Black.copy(alpha = 0.5f) 
+                                      else Color.White.copy(alpha = 0.6f),
+                              topLeft = Offset(centerX - squareSize/2, centerY - squareSize/2),
+                              size = Size(squareSize, squareSize)
+                            )
+                          } else {
+                            // Normal analysis dots
+                            drawCircle(
+                              color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
+                              else Color.White.copy(alpha = (-score * 0.4).toFloat()),
+                                radius = 3.dp.toPx(),
+                              center = Offset(centerX, centerY)
+                            )
+                          }
                         }
                       }
                     }
