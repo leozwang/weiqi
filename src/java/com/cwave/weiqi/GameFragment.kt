@@ -382,11 +382,8 @@ class GameFragment : Fragment() {
                     if (showAnalysis && finalScoreText == null) {
                       val winratePercent = (analysis.winrate * 100).toInt()
                       val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
-                      val leadColor = if (analysis.scoreLead >= 0) {
-                          if (currentTurn == Stone.BLACK) "B" else "W"
-                      } else {
-                          if (currentTurn == Stone.BLACK) "W" else "B"
-                      }
+                      // scoreLead in JSON is now always relative to Black (positive = Black leads)
+                      val leadColor = if (analysis.scoreLead >= 0) "B" else "W"
                       val leadText = "$leadColor+$scoreLeadFormatted"
 
                       Spacer(Modifier.width(12.dp))
