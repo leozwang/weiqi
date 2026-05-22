@@ -476,13 +476,6 @@ class GameFragment : Fragment() {
                     }
                   }
 
-                  Text(
-                    text = if (isEngineInitialized) lastMoveText else statusText,
-                    style = MaterialTheme.typography.caption,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(bottom = 4.dp)
-                  )
-
                   if (isThinking) {
                     LinearProgressIndicator(
                       modifier = Modifier.fillMaxWidth().height(4.dp),
