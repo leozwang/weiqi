@@ -455,19 +455,21 @@ class GameFragment : Fragment() {
                     }
 
                     if (showAnalysis && finalScoreText == null) {
-                      val winratePercent = (analysis.winrate * 100).toInt()
-                      val scoreLeadFormatted = String.format("%.1f", abs(analysis.scoreLead))
-                      // scoreLead in JSON is now always relative to Black (positive = Black leads)
-                      val leadColor = if (analysis.scoreLead >= 0) "B" else "W"
-                      val leadText = "$leadColor+$scoreLeadFormatted"
+                      // Normalize analysis to Black's perspective for consistent display
+                      val blackWinrate = if (currentTurn == Stone.BLACK) analysis.winrate else (1.0 - analysis.winrate)
+                      val blackScoreLead = if (currentTurn == Stone.BLACK) analysis.scoreLead else -analysis.scoreLead
+                      
+                      val winratePercent = (blackWinrate * 100).toInt()
+                      val scoreLeadFormatted = String.format("%.1f", blackScoreLead)
+                      val leadSign = if (blackScoreLead >= 0) "+" else ""
 
                       Spacer(Modifier.width(12.dp))
                       Divider(modifier = Modifier.height(20.dp).width(1.dp), color = Color.Gray.copy(alpha = 0.5f))
                       Spacer(Modifier.width(12.dp))
 
                       Text(
-                        text = "$winratePercent% | $leadText pts",
-                        style = MaterialTheme.typography.h5,
+                        text = "Black $winratePercent% $leadSign$scoreLeadFormatted Pts",
+                        style = MaterialTheme.typography.h6,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colors.primary
                       )
