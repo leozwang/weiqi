@@ -172,7 +172,12 @@ class GameFragment : Fragment() {
     val soundId = remember { mutableStateOf<Int?>(null) }
         
     LaunchedEffect(Unit) {
-      soundId.value = soundPool.load(context, R.raw.place_stone, 1)
+      withContext(Dispatchers.IO) {
+        val path = copyAssetToFile("place_stone.mp3")
+        if (path != null) {
+          soundId.value = soundPool.load(path, 1)
+        }
+      }
     }
 
     fun playMoveSound() {
