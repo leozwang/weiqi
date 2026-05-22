@@ -6,7 +6,10 @@ cc_binary(
     name = "libkatago_opencl.so",
     srcs = ["external/opencl/opencl_proxy.cpp"],
     linkshared = 1,
-    linkopts = ["-ldl"],
+    linkopts = [
+        "-ldl",
+        "-llog",
+    ],
     deps = [":opencl_headers"],
 )
 
@@ -67,6 +70,10 @@ cc_library(
         "cpp/external/filesystem-1.5.8/include",
         "cpp/external/half-2.2.0/include",
         "external/opencl/include/CL",
+    ],
+    copts = [
+        "-fexceptions",
+        "-frtti",
     ],
     defines = [
         "USE_OPENCL_BACKEND",

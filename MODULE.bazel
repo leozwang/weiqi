@@ -23,6 +23,7 @@ android_ndk = use_extension(
     "@rules_android_ndk//:extension.bzl",
     "android_ndk_repository_extension",
 )
+android_ndk.configure(api_level = 26)
 use_repo(android_ndk, "androidndk")
 
 android_sdk = use_extension(

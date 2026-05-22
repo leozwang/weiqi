@@ -4,6 +4,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
 cc_library(
     name = "katago_jni_native",
     srcs = ["katago_bridge.cpp"],
+    copts = ["-fexceptions"],
     linkopts = ["-llog"],
     deps = [
         "@katago_repo//:katago_lib",
@@ -18,6 +19,13 @@ cc_library(
 cc_binary(
     name = "libkatago_jni.so",
     linkshared = 1,
+    linkstatic = 1,
+    linkopts = [
+        "-llog",
+        "-static-libstdc++",
+        "-static-libgcc",
+        "-lunwind",
+    ],
     deps = [
         ":katago_jni_native",
         "@katago_repo//:libkatago_opencl.so",
