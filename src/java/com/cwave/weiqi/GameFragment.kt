@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.fragment.app.Fragment
 import com.cwave.weiqi.katago.KataGoBridge
 import kotlinx.coroutines.Dispatchers
@@ -92,11 +93,63 @@ class GameFragment : Fragment() {
     return ComposeView(requireContext()).apply {
       setContent {
         MaterialTheme {
+          var isEngineInitialized by remember { mutableStateOf(false) }
+          var isThinking by remember { mutableStateOf(false) }
+          var statusText by remember { mutableStateOf("Initializing engine...") }
+
           Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colors.background
           ) {
-            GameScreen(bridge)
+            GameScreen(
+              bridge = bridge,
+              isEngineInitialized = isEngineInitialized,
+              onEngineInitializedChange = { isEngineInitialized = it },
+              isThinking = isThinking,
+              onThinkingChange = { isThinking = it },
+              statusText = statusText,
+              onStatusTextChange = { statusText = it }
+            )
+
+            if (!isEngineInitialized && isThinking) {
+              Box(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .background(Color.Black.copy(alpha = 0.6f))
+                  .pointerInput(Unit) {},
+                contentAlignment = Alignment.Center
+              ) {
+                Card(
+                  shape = RoundedCornerShape(24.dp),
+                  elevation = 8.dp,
+                  modifier = Modifier.padding(32.dp)
+                ) {
+                  Column(
+                    modifier = Modifier.padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                  ) {
+                    CircularProgressIndicator(
+                      color = MaterialTheme.colors.primary,
+                      strokeWidth = 4.dp
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                      text = statusText,
+                      style = MaterialTheme.typography.h6,
+                      fontWeight = FontWeight.Bold,
+                      textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                      text = "Please wait, this happens only once.",
+                      style = MaterialTheme.typography.caption,
+                      color = Color.Gray
+                    )
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -104,17 +157,23 @@ class GameFragment : Fragment() {
   }
 
   @Composable
-  fun GameScreen(bridge: KataGoBridge) {
+  fun GameScreen(
+    bridge: KataGoBridge,
+    isEngineInitialized: Boolean,
+    onEngineInitializedChange: (Boolean) -> Unit,
+    isThinking: Boolean,
+    onThinkingChange: (Boolean) -> Unit,
+    statusText: String,
+    onStatusTextChange: (String) -> Unit
+  ) {
     val scope = rememberCoroutineScope()
     var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
     var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var lastMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var analysis by remember { mutableStateOf(AnalysisResult()) }
     var showAnalysis by remember { mutableStateOf(false) }
-    var isEngineInitialized by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("Initializing engine...") }
+    
     var lastMoveText by remember { mutableStateOf("No moves yet") }
-    var isThinking by remember { mutableStateOf(false) }
     var currentMode by remember { mutableStateOf(GameMode.USER_BLACK) }
     var currentTurn by remember { mutableStateOf(Stone.BLACK) }
     var aiAutoPlay by remember { mutableStateOf(false) }
@@ -143,11 +202,11 @@ class GameFragment : Fragment() {
             withContext(Dispatchers.IO) {
                 // We use a local busy check if needed, but since we are in a LaunchedEffect 
                 // keyed by currentTurn, it won't run multiple times for the same turn.
-                statusText = "Analyzing position..."
+                onStatusTextChange("Analyzing position...")
                 // Use a fraction of currentVisits for analysis to keep it fast
                 val analysisVisits = (currentVisits * 0.4).toInt().coerceIn(100, 1000)
                 bridge.sendGtpCommand("think $colorStr $analysisVisits")
-                statusText = "Turn."
+                onStatusTextChange("Turn.")
             }
         }
         
@@ -188,26 +247,26 @@ class GameFragment : Fragment() {
 
     suspend fun checkGameEnd() {
       if (consecutivePasses >= 2) {
-        statusText = "Game ended. Scoring..."
-        isThinking = true
+        onStatusTextChange("Game ended. Scoring...")
+        onThinkingChange(true)
         withContext(Dispatchers.IO) {
           val score = bridge.sendGtpCommand("final_score")
           if (score.startsWith("=")) {
             finalScoreText = score.substring(1).trim()
-            statusText = "Game Over"
+            onStatusTextChange("Game Over")
             // Fetch final analysis for territory display
             analysis = getAnalysis(bridge, currentTurn)
           }
-          isThinking = false
+          onThinkingChange(false)
         }
       }
     }
 
     suspend fun handleAiMove(color: Stone) {
-      isThinking = true
-      statusText = "AI is thinking..."
+      onThinkingChange(true)
+      onStatusTextChange("AI is thinking...")
       genAiMove(color, bridge) { aiX, aiY, aiMoveStr ->
-        isThinking = false
+        onThinkingChange(false)
         boardState = syncBoardState(bridge)
         if (aiX != -1 && aiY != -1) {
           lastMove = aiX to aiY
@@ -221,40 +280,40 @@ class GameFragment : Fragment() {
           consecutivePasses = 0
           
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
-          statusText = "Turn."
+          onStatusTextChange("Turn.")
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
           consecutivePasses++
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
-          statusText = "Turn."
+          onStatusTextChange("Turn.")
           scope.launch { checkGameEnd() }
         } else if (aiMoveStr.lowercase() == "resign") {
             val winner = if (color == Stone.BLACK) "White" else "Black"
-            statusText = "AI Resigned. $winner wins!"
+            onStatusTextChange("AI Resigned. $winner wins!")
             lastMoveText = "AI Resigned."
             finalScoreText = "$winner wins by resignation"
         } else {
-          statusText = "AI error."
+          onStatusTextChange("AI error.")
         }
       }
     }
 
     suspend fun startNewGame(mode: GameMode, h: Int, m: String, v: Int) {
-      isThinking = true
+      onThinkingChange(true)
       
       if (m != currentModelName) {
-        statusText = "Re-initializing engine with $m..."
+        onStatusTextChange("Re-initializing engine with $m...")
         bridge.shutdown()
         val res = initEngine(m)
         if (res != 0) {
-          statusText = "Engine Init Failed: $res"
-          isThinking = false
+          onStatusTextChange("Engine Init Failed: $res")
+          onThinkingChange(false)
           return
         }
         currentModelName = m
       }
 
-      statusText = "Starting new game..."
+      onStatusTextChange("Starting new game...")
       withContext(Dispatchers.IO) {
         bridge.sendGtpCommand("clear_board")
         bridge.sendGtpCommand("set_max_visits $v")
@@ -297,11 +356,11 @@ class GameFragment : Fragment() {
       handicap = h
       currentVisits = v
       aiAutoPlay = false
-      isThinking = false
+      onThinkingChange(false)
       
       // KataGo sets turn to White after handicap
       currentTurn = if (h > 0) Stone.WHITE else Stone.BLACK
-      statusText = "Turn."
+      onStatusTextChange("Turn.")
       lastMoveText = "No moves yet"
 
       if (currentMode == GameMode.USER_WHITE || (currentMode == GameMode.AI_BOTH) || (h > 0 && currentMode == GameMode.USER_BLACK)) {
@@ -310,14 +369,16 @@ class GameFragment : Fragment() {
     }
 
     LaunchedEffect(Unit) {
-      statusText = "Tuning GPU (One-time setup, 1-2 mins)..."
+      onThinkingChange(true)
+      onStatusTextChange("Tuning GPU (One-time setup, 1-2 mins)...")
       val result = initEngine(currentModelName)
+      onThinkingChange(false)
       if (result == 0) {
-        isEngineInitialized = true
-        statusText = "Engine ready."
+        onEngineInitializedChange(true)
+        onStatusTextChange("Engine ready.")
         showSettings = true
       } else {
-        statusText = "Engine Init Failed: $result"
+        onStatusTextChange("Engine Init Failed: $result")
       }
     }
 
@@ -361,7 +422,8 @@ class GameFragment : Fragment() {
               ) {
                 Column(
                   modifier = Modifier.fillMaxSize(),
-                  verticalArrangement = Arrangement.Center
+                  verticalArrangement = Arrangement.Center,
+                  horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                   Row(
                     modifier = Modifier.padding(horizontal = 12.dp).weight(1f),
@@ -411,6 +473,13 @@ class GameFragment : Fragment() {
                       )
                     }
                   }
+
+                  Text(
+                    text = if (isEngineInitialized) lastMoveText else statusText,
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(bottom = 4.dp)
+                  )
 
                   if (isThinking) {
                     LinearProgressIndicator(
@@ -740,10 +809,10 @@ class GameFragment : Fragment() {
                           } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
                             scope.launch { handleAiMove(Stone.BLACK) }
                           } else {
-                            statusText = "Turn."
+                            onStatusTextChange("Turn.")
                           }
                         } else {
-                          statusText = "Illegal move at ${toGtpCoords(x, y)}"
+                          onStatusTextChange("Illegal move at ${toGtpCoords(x, y)}")
                           previewMove = null
                         }
                       }
@@ -832,276 +901,304 @@ class GameFragment : Fragment() {
           }
 
           if (showSettings) {
-            AlertDialog(
-              onDismissRequest = { if (isEngineInitialized) showSettings = false },
-              shape = RoundedCornerShape(24.dp),
-              title = {
-                Text(
-                  "New Game",
-                  style = MaterialTheme.typography.h5,
-                  fontWeight = FontWeight.Bold,
-                  modifier = Modifier.padding(bottom = 8.dp)
-                )
-              },
-              text = {
-                Column(
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                ) {
-                  // --- Model Selection ---
-                  Text(
-                    "AI ENGINE",
-                    style = MaterialTheme.typography.overline,
-                    color = MaterialTheme.colors.primary,
-                    fontWeight = FontWeight.Bold
-                  )
-                  Spacer(Modifier.height(8.dp))
-                  
-                  Surface(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .clip(RoundedCornerShape(12.dp))
-                      .pointerInput(Unit) {
-                        detectTapGestures { currentModelName = "model.bin.gz" }
-                      },
-                    color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
-                    border = BorderStroke(
-                      width = if (currentModelName == "model.bin.gz") 2.dp else 1.dp,
-                      color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
+            Dialog(
+              onDismissRequest = { if (isEngineInitialized) showSettings = false }
+            ) {
+              Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colors.surface,
+                elevation = 12.dp,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .fillMaxHeight(0.85f)
+              ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                  Column(
+                    modifier = Modifier.fillMaxSize()
+                  ) {
+                    // --- Title ---
+                    Text(
+                      "New Game",
+                      style = MaterialTheme.typography.h5,
+                      fontWeight = FontWeight.Bold,
+                      modifier = Modifier.padding(top = 24.dp, start = 24.dp, end = 24.dp, bottom = 16.dp)
                     )
-                  ) {
-                    Row(
-                      modifier = Modifier.padding(16.dp),
-                      verticalAlignment = Alignment.CenterVertically
-                    ) {
-                      Icon(
-                        Icons.Default.Memory,
-                        contentDescription = null,
-                        tint = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.Gray,
-                        modifier = Modifier.size(32.dp)
-                      )
-                      Column(modifier = Modifier.padding(start = 16.dp)) {
-                        Text(
-                          "Mobile (10b)",
-                          style = MaterialTheme.typography.subtitle1,
-                          fontWeight = FontWeight.Bold,
-                          color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
-                        )
-                        Text("Fast, balanced performance", style = MaterialTheme.typography.caption)
-                      }
-                      Spacer(Modifier.weight(1f))
-                      RadioButton(
-                        selected = currentModelName == "model.bin.gz",
-                        onClick = { currentModelName = "model.bin.gz" },
-                        colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
-                      )
-                    }
-                  }
 
-                  Spacer(modifier = Modifier.height(24.dp))
-
-                  // --- Handicap Selection ---
-                  Text(
-                    "HANDICAP",
-                    style = MaterialTheme.typography.overline,
-                    color = MaterialTheme.colors.primary,
-                    fontWeight = FontWeight.Bold
-                  )
-                  Spacer(Modifier.height(8.dp))
-                  
-                  androidx.compose.foundation.lazy.LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
-                  ) {
-                    items(10) { h ->
-                      val isSelected = handicap == h
-                      Surface(
-                        modifier = Modifier
-                          .size(width = 72.dp, height = 56.dp)
-                          .clip(RoundedCornerShape(16.dp))
-                          .pointerInput(h) {
-                            detectTapGestures { handicap = h }
-                          },
-                        color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
-                        elevation = if (isSelected) 6.dp else 0.dp,
-                        border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
-                      ) {
-                        Box(contentAlignment = Alignment.Center) {
-                          Text(
-                            text = if (h == 0) "None" else h.toString(),
-                            color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
-                            style = MaterialTheme.typography.button,
-                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
-                          )
-                        }
-                      }
-                    }
-                  }
-
-                  Spacer(modifier = Modifier.height(24.dp))
-
-                  // --- AI Strength Selection ---
-                  Text(
-                    "AI STRENGTH",
-                    style = MaterialTheme.typography.overline,
-                    color = MaterialTheme.colors.primary,
-                    fontWeight = FontWeight.Bold
-                  )
-                  Spacer(Modifier.height(8.dp))
-                  
-                  val levels = listOf(
-                    "Easy" to 100,
-                    "Amateur" to 500,
-                    "Advanced" to 1000,
-                    "Pro" to 2500
-                  )
-                  
-                  androidx.compose.foundation.lazy.LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
-                  ) {
-                    items(levels.size) { index ->
-                      val (label, v) = levels[index]
-                      val isSelected = currentVisits == v
-                      Surface(
-                        modifier = Modifier
-                          .size(width = 100.dp, height = 56.dp)
-                          .clip(RoundedCornerShape(16.dp))
-                          .pointerInput(v) {
-                            detectTapGestures { currentVisits = v }
-                          },
-                        color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
-                        elevation = if (isSelected) 6.dp else 0.dp,
-                        border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
-                      ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                          Text(
-                            text = label,
-                            color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
-                            style = MaterialTheme.typography.button,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                          )
-                          Text(
-                            text = "$v visits",
-                            color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
-                            style = MaterialTheme.typography.caption
-                          )
-                        }
-                      }
-                    }
-                  }
-
-                  Spacer(modifier = Modifier.height(24.dp))
-
-                  // --- Mode Selection ---
-                  Text(
-                    "PLAY AS",
-                    style = MaterialTheme.typography.overline,
-                    color = MaterialTheme.colors.primary,
-                    fontWeight = FontWeight.Bold
-                  )
-                  Spacer(Modifier.height(8.dp))
-                  
-                  GameMode.values().forEach { mode ->
-                    val isSelected = currentMode == mode
-                    Surface(
+                    // --- Scrollable Settings ---
+                    Column(
                       modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .pointerInput(Unit) {
-                          detectTapGestures { currentMode = mode }
-                        },
-                      color = if (isSelected) MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
-                      border = BorderStroke(
-                        width = if (isSelected) 2.dp else 1.dp,
-                        color = if (isSelected) MaterialTheme.colors.primary else Color.Transparent
-                      )
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp)
                     ) {
-                      Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                      // --- Model Selection ---
+                      Text(
+                        "AI ENGINE",
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      
+                      Surface(
+                        modifier = Modifier
+                          .fillMaxWidth()
+                          .clip(RoundedCornerShape(12.dp))
+                          .pointerInput(Unit) {
+                            detectTapGestures { currentModelName = "model.bin.gz" }
+                          },
+                        color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
+                        border = BorderStroke(
+                          width = if (currentModelName == "model.bin.gz") 2.dp else 1.dp,
+                          color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
+                        )
                       ) {
-                        val (label, desc, icon) = when(mode) {
-                          GameMode.USER_BLACK -> Triple("You are Black", "Traditional game", Icons.Default.Person)
-                          GameMode.USER_WHITE -> Triple("You are White", "Play with Handicap", Icons.Default.Person)
-                          GameMode.USER_BOTH -> Triple("Two Players", "Local multiplayer", Icons.Default.Groups)
-                          GameMode.AI_BOTH -> Triple("AI vs AI", "Engine self-play", Icons.Default.SmartToy)
-                        }
-                        
-                        Box(
-                          modifier = Modifier
-                            .size(40.dp)
-                            .background(
-                              if (isSelected) MaterialTheme.colors.primary.copy(alpha = 0.1f) else Color.LightGray.copy(alpha = 0.2f),
-                              CircleShape
-                            ),
-                          contentAlignment = Alignment.Center
+                        Row(
+                          modifier = Modifier.padding(16.dp),
+                          verticalAlignment = Alignment.CenterVertically
                         ) {
                           Icon(
-                            imageVector = icon,
+                            Icons.Default.Memory,
                             contentDescription = null,
-                            tint = if (isSelected) MaterialTheme.colors.primary else Color.Gray,
-                            modifier = Modifier.size(24.dp)
+                            tint = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.Gray,
+                            modifier = Modifier.size(32.dp)
+                          )
+                          Column(modifier = Modifier.padding(start = 16.dp)) {
+                            Text(
+                              "Mobile (10b)",
+                              style = MaterialTheme.typography.subtitle1,
+                              fontWeight = FontWeight.Bold,
+                              color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
+                            )
+                            Text("Fast, balanced performance", style = MaterialTheme.typography.caption)
+                          }
+                          Spacer(Modifier.weight(1f))
+                          RadioButton(
+                            selected = currentModelName == "model.bin.gz",
+                            onClick = { currentModelName = "model.bin.gz" },
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
                           )
                         }
-                        
-                        Column(modifier = Modifier.padding(start = 16.dp)) {
-                          Text(
-                            text = label,
-                            style = MaterialTheme.typography.subtitle1,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                          )
-                          Text(text = desc, style = MaterialTheme.typography.caption)
-                        }
-                        
-                        Spacer(Modifier.weight(1f))
-                        
-                        RadioButton(
-                          selected = isSelected,
-                          onClick = { currentMode = mode },
-                          colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
-                        )
                       }
+
+                      Spacer(modifier = Modifier.height(24.dp))
+
+                      // --- Handicap Selection ---
+                      Text(
+                        "HANDICAP",
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      
+                      androidx.compose.foundation.lazy.LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                      ) {
+                        items(10) { h ->
+                          val isSelected = handicap == h
+                          Surface(
+                            modifier = Modifier
+                              .size(width = 72.dp, height = 56.dp)
+                              .clip(RoundedCornerShape(16.dp))
+                              .pointerInput(h) {
+                                detectTapGestures { handicap = h }
+                              },
+                            color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
+                            elevation = if (isSelected) 6.dp else 0.dp,
+                            border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
+                          ) {
+                            Box(contentAlignment = Alignment.Center) {
+                              Text(
+                                text = if (h == 0) "None" else h.toString(),
+                                color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+                                style = MaterialTheme.typography.button,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
+                              )
+                            }
+                          }
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(24.dp))
+
+                      // --- AI Strength Selection ---
+                      Text(
+                        "AI STRENGTH",
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      
+                      val levels = listOf(
+                        "Easy" to 100,
+                        "Amateur" to 500,
+                        "Advanced" to 1000,
+                        "Pro" to 2500
+                      )
+                      
+                      androidx.compose.foundation.lazy.LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                      ) {
+                        items(levels.size) { index ->
+                          val (label, v) = levels[index]
+                          val isSelected = currentVisits == v
+                          Surface(
+                            modifier = Modifier
+                              .size(width = 100.dp, height = 56.dp)
+                              .clip(RoundedCornerShape(16.dp))
+                              .pointerInput(v) {
+                                detectTapGestures { currentVisits = v }
+                              },
+                            color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
+                            elevation = if (isSelected) 6.dp else 0.dp,
+                            border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
+                          ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                              Text(
+                                text = label,
+                                color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+                                style = MaterialTheme.typography.button,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                              )
+                              Text(
+                                text = "$v visits",
+                                color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
+                                style = MaterialTheme.typography.caption
+                              )
+                            }
+                          }
+                        }
+                      }
+
+                      Spacer(modifier = Modifier.height(24.dp))
+
+                      // --- Mode Selection ---
+                      Text(
+                        "PLAY AS",
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      
+                      GameMode.values().forEach { mode ->
+                        val isSelected = currentMode == mode
+                        Surface(
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .pointerInput(Unit) {
+                              detectTapGestures { currentMode = mode }
+                            },
+                          color = if (isSelected) MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
+                          border = BorderStroke(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colors.primary else Color.Transparent
+                          )
+                        ) {
+                          Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                          ) {
+                            val (label, desc, icon) = when(mode) {
+                              GameMode.USER_BLACK -> Triple("You are Black", "Traditional game", Icons.Default.Person)
+                              GameMode.USER_WHITE -> Triple("You are White", "Play with Handicap", Icons.Default.Person)
+                              GameMode.USER_BOTH -> Triple("Two Players", "Local multiplayer", Icons.Default.Groups)
+                              GameMode.AI_BOTH -> Triple("AI vs AI", "Engine self-play", Icons.Default.SmartToy)
+                            }
+                            
+                            Box(
+                              modifier = Modifier
+                                .size(40.dp)
+                                .background(
+                                  if (isSelected) MaterialTheme.colors.primary.copy(alpha = 0.1f) else Color.LightGray.copy(alpha = 0.2f),
+                                  CircleShape
+                                ),
+                              contentAlignment = Alignment.Center
+                            ) {
+                              Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                tint = if (isSelected) MaterialTheme.colors.primary else Color.Gray,
+                                modifier = Modifier.size(24.dp)
+                              )
+                            }
+                            
+                            Column(modifier = Modifier.padding(start = 16.dp)) {
+                              Text(
+                                text = label,
+                                style = MaterialTheme.typography.subtitle1,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                              )
+                              Text(text = desc, style = MaterialTheme.typography.caption)
+                            }
+                            
+                            Spacer(Modifier.weight(1f))
+                            
+                            RadioButton(
+                              selected = isSelected,
+                              onClick = { currentMode = mode },
+                              colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
+                            )
+                          }
+                        }
+                      }
+                      Spacer(Modifier.height(100.dp)) // Extra space for fixed footer
                     }
                   }
-                }
-              },
-              confirmButton = {
-                Button(
-                  onClick = {
-                    showSettings = false
-                    scope.launch {
-                      startNewGame(currentMode, handicap, currentModelName, currentVisits)
-                    }
-                  },
-                  shape = RoundedCornerShape(24.dp),
-                  modifier = Modifier
-                    .padding(8.dp)
-                    .fillMaxWidth()
-                    .height(48.dp)
-                ) {
-                  Text("START GAME", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                }
-              },
-              dismissButton = {
-                if (isEngineInitialized) {
-                  TextButton(
-                    onClick = { showSettings = false },
-                    modifier = Modifier.padding(8.dp)
+
+                  // --- Fixed Footer Buttons ---
+                  Surface(
+                    modifier = Modifier
+                      .align(Alignment.BottomCenter)
+                      .fillMaxWidth(),
+                    color = MaterialTheme.colors.surface,
+                    elevation = 8.dp
                   ) {
-                    Text("CANCEL", color = Color.Gray)
+                    Row(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                      horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      TextButton(
+                        onClick = { showSettings = false },
+                        modifier = Modifier.height(48.dp)
+                      ) {
+                        Text("CANCEL", color = Color.Gray, fontWeight = FontWeight.Bold)
+                      }
+                      Button(
+                        onClick = {
+                          showSettings = false
+                          scope.launch {
+                            startNewGame(currentMode, handicap, currentModelName, currentVisits)
+                          }
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                          .height(48.dp)
+                          .padding(horizontal = 8.dp),
+                        elevation = ButtonDefaults.elevation(defaultElevation = 4.dp)
+                      ) {
+                        Text("START GAME", fontWeight = FontWeight.Bold)
+                      }
+                    }
                   }
                 }
               }
-            )
+            }
           }
 
           if (finalScoreText != null) {
