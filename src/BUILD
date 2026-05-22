@@ -97,7 +97,10 @@ android_binary(
     manifest_values = {
         "applicationId": "com.cwave.weiqi",
     },
-    nocompress_extensions = [".so"],
+    nocompress_extensions = [
+        ".so",
+        ".mp3",
+    ],
     deps = [
          ":lib",
          "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
@@ -126,7 +129,10 @@ android_application(
     manifest_values = {
         "applicationId": "com.cwave.weiqi",
     },
-    nocompress_extensions = [".so"],
+    nocompress_extensions = [
+        ".so",
+        ".mp3",
+    ],
     deps = [
         ":lib",
         "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
