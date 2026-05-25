@@ -1,4 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Weiqi Go</string>
+    <string name="tuning_gpu">围棋 碁 GO!\n\nTuning GPU...\nOne-time setup, 1-2 mins</string>
+    <string name="initializing_engine">围棋 碁 GO!\nInitializing engine...</string>
+    
+    <!-- Main game UI strings -->
+    <string name="btn_pass">PASS</string>
+    <string name="btn_place">PLACE</string>
+    <string name="btn_new_game">NEW GAME</string>
+    <string name="btn_analysis">ANALYSIS</string>
+    
+    <!-- New game configuration strings -->
+    <string name="title_new_game">New Game</string>
+    <string name="section_ai_engine">AI ENGINE</string>
+    <string name="section_handicap">HANDICAP</string>
+    <string name="section_ai_strength">AI STRENGTH</string>
+    <string name="section_play_as">PLAY AS</string>
+    
+    <!-- Details settings -->
+    <string name="engine_mobile_title">Mobile (10b)</string>
+    <string name="engine_mobile_desc">Fast, balanced performance</string>
+    <string name="handicap_none">None</string>
+    <string name="strength_visits">%d visits</string>
+    <string name="strength_easy">Easy</string>
+    <string name="strength_amateur">Amateur</string>
+    <string name="strength_advanced">Advanced</string>
+    <string name="strength_pro">Pro</string>
+    
+    <!-- Game modes -->
+    <string name="mode_user_black_title">You are Black</string>
+    <string name="mode_user_black_desc">Traditional game</string>
+    <string name="mode_user_white_title">You are White</string>
+    <string name="mode_user_white_desc">Play with Handicap</string>
+    <string name="mode_user_both_title">Two Players</string>
+    <string name="mode_user_both_desc">Local multiplayer</string>
+    <string name="mode_ai_both_title">AI vs AI</string>
+    <string name="mode_ai_both_desc">Engine self-play</string>
+    
+    <!-- Dialog Actions -->
+    <string name="btn_cancel">CANCEL</string>
+    <string name="btn_start">START</string>
 </resources>

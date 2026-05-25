@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">碁 Weiqi Go</string>
+    <string name="tuning_gpu">围棋 碁 GO!\n\nGPUのチューニング中...\n初回のみ1〜2分かかります</string>
+    <string name="initializing_engine">围棋 碁 GO!\nエンジンを初期化中...</string>
+    
+    <!-- Main game UI strings -->
+    <string name="btn_pass">パス</string>
+    <string name="btn_place">着手</string>
+    <string name="btn_new_game">新規対局</string>
+    <string name="btn_analysis">形勢判断</string>
+    
+    <!-- New game configuration strings -->
+    <string name="title_new_game">新規対局の開始</string>
+    <string name="section_ai_engine">AI エンジン</string>
+    <string name="section_handicap">置き石 (ハンディ)</string>
+    <string name="section_ai_strength">AI の強さ</string>
+    <string name="section_play_as">手番の選択</string>
+    
+    <!-- Details settings -->
+    <string name="engine_mobile_title">モバイル版 (10b)</string>
+    <string name="engine_mobile_desc">高速でバランスのとれたパフォーマンス</string>
+    <string name="handicap_none">なし</string>
+    <string name="strength_visits">%d 回思考</string>
+    <string name="strength_easy">初級</string>
+    <string name="strength_amateur">中級</string>
+    <string name="strength_advanced">上級</string>
+    <string name="strength_pro">プロ級</string>
+    
+    <!-- Game modes -->
+    <string name="mode_user_black_title">黒番 (自分)</string>
+    <string name="mode_user_black_desc">通常の互先対局</string>
+    <string name="mode_user_white_title">白番 (自分)</string>
+    <string name="mode_user_white_desc">置き碁 (ハンディキャップ)</string>
+    <string name="mode_user_both_title">二人対局</string>
+    <string name="mode_user_both_desc">ローカルでの対人戦</string>
+    <string name="mode_ai_both_title">AI 対 AI</string>
+    <string name="mode_ai_both_desc">AIエンジンの自己対戦</string>
+    
+    <!-- Dialog Actions -->
+    <string name="btn_cancel">キャンセル</string>
+    <string name="btn_start">対局開始</string>
+</resources>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">围棋 Weiqi Go</string>
+    <string name="tuning_gpu">围棋 碁 GO!\n\n正在调优 GPU...\n初次设定需 1-2 分钟</string>
+    <string name="initializing_engine">围棋 碁 GO!\n正在初始化引擎...</string>
+    
+    <!-- Main game UI strings -->
+    <string name="btn_pass">弃子</string>
+    <string name="btn_place">落子</string>
+    <string name="btn_new_game">新对局</string>
+    <string name="btn_analysis">形势研判</string>
+    
+    <!-- New game configuration strings -->
+    <string name="title_new_game">新建对局</string>
+    <string name="section_ai_engine">AI 引擎</string>
+    <string name="section_handicap">让子数</string>
+    <string name="section_ai_strength">难度</string>
+    <string name="section_play_as">对局</string>
+    
+    <!-- Details settings -->
+    <string name="engine_mobile_title">移动版 (10b)</string>
+    <string name="engine_mobile_desc">快速且均衡的效能表现</string>
+    <string name="handicap_none">无</string>
+    <string name="strength_visits">%d 次计算</string>
+    <string name="strength_easy">入门级</string>
+    <string name="strength_amateur">业余级</string>
+    <string name="strength_advanced">高级</string>
+    <string name="strength_pro">职业级</string>
+    
+    <!-- Game modes -->
+    <string name="mode_user_black_title">持黑 (您)</string>
+    <string name="mode_user_black_desc">传统对局</string>
+    <string name="mode_user_white_title">执白 (您)</string>
+    <string name="mode_user_white_desc">让先对局</string>
+    <string name="mode_user_both_title">玩家对局</string>
+    <string name="mode_user_both_desc">本地双人对局</string>
+    <string name="mode_ai_both_title">AI对局</string>
+    <string name="mode_ai_both_desc">引擎自我研讨</string>
+    
+    <!-- Dialog Actions -->
+    <string name="btn_cancel">取消</string>
+    <string name="btn_start">开始对局</string>
+</resources>

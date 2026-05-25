@@ -27,8 +27,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stars
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,7 +94,8 @@ class GameFragment : Fragment() {
         MaterialTheme {
           var isEngineInitialized by remember { mutableStateOf(false) }
           var isThinking by remember { mutableStateOf(false) }
-          var statusText by remember { mutableStateOf("Initializing engine...") }
+          val context = androidx.compose.ui.platform.LocalContext.current
+          var statusText by remember { mutableStateOf(context.getString(R.string.initializing_engine)) }
 
           Surface(
             modifier = Modifier.fillMaxSize(),
@@ -370,7 +370,7 @@ class GameFragment : Fragment() {
 
     LaunchedEffect(Unit) {
       onThinkingChange(true)
-      onStatusTextChange("Tuning GPU (One-time setup, 1-2 mins)...")
+      onStatusTextChange(requireContext().getString(R.string.tuning_gpu))
       val result = initEngine(currentModelName)
       onThinkingChange(false)
       if (result == 0) {
@@ -385,17 +385,32 @@ class GameFragment : Fragment() {
     Scaffold(
       topBar = {
         TopAppBar(
-          title = { Text("Go Game") },
+          title = { Text("围棋 碁 GO!") },
           backgroundColor = MaterialTheme.colors.primary,
           contentColor = MaterialTheme.colors.onPrimary,
           elevation = 4.dp,
           actions = {
-            IconButton(onClick = { showAnalysis = !showAnalysis }) {
-              Icon(
-                imageVector = if (showAnalysis) Icons.Default.Visibility
-                else Icons.Default.VisibilityOff,
-                contentDescription = "Toggle AI Analysis"
-              )
+            TextButton(
+              onClick = { showAnalysis = !showAnalysis },
+              modifier = Modifier.padding(end = 8.dp)
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Analytics,
+                  tint = if (showAnalysis) MaterialTheme.colors.secondary else MaterialTheme.colors.onPrimary,
+                  contentDescription = "Toggle AI Analysis",
+                  modifier = Modifier.size(36.dp) // Enlarged by 50% (default icon size is 24dp)
+                )
+                Text(
+                  text = context.getString(R.string.btn_analysis),
+                  color = if (showAnalysis) MaterialTheme.colors.secondary else MaterialTheme.colors.onPrimary,
+                  style = MaterialTheme.typography.button,
+                  fontWeight = FontWeight.Bold
+                )
+              }
             }
           }
         )
@@ -677,43 +692,72 @@ class GameFragment : Fragment() {
                           drawCircle(
                             color = if (stone == Stone.BLACK) Color.White else Color.Black,
                             radius = 4.dp.toPx(),
-                            center = Offset(centerX, centerY),
-                            style = Stroke(width = 1.5.dp.toPx())
+                            center = Offset(centerX, centerY)
                           )
                         }
                       }
                     }
-                  }
-
-                  // Draw Preview Stone (Ghost Stone)
+                                 // Draw Preview Stone (Ghost Stone)
                   previewMove?.let { (px, py) ->
                     val centerX = marginPx + px * stepPx
                     val centerY = marginPx + py * stepPx
-                    val previewColor = if (currentTurn == Stone.BLACK) Color.Black else Color.White
-                    val previewAlpha = if (currentTurn == Stone.BLACK) 0.45f else 0.75f
                     
-                    drawCircle(
-                      color = previewColor.copy(alpha = previewAlpha),
-                      radius = stoneRadius,
-                      center = Offset(centerX, centerY)
-                    )
-
-                    // Add a distinct border for the preview stone
-                    drawCircle(
-                      color = if (currentTurn == Stone.BLACK) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.8f),
-                      radius = stoneRadius,
-                      center = Offset(centerX, centerY),
-                      style = Stroke(width = 1.5.dp.toPx())
-                    )
-                    
-                    // Highlight
-                    drawCircle(
-                      color = (if (currentTurn == Stone.BLACK) Color.White else Color.Black).copy(alpha = 0.3f),
-                      radius = stoneRadius * 0.4f,
-                      center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f)
-                    )
+                    if (currentTurn == Stone.BLACK) {
+                      drawCircle(
+                        brush = Brush.radialGradient(
+                          colors = listOf(Color(0xFF333333).copy(alpha = 0.6f), Color.Black.copy(alpha = 0.6f)),
+                          center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                          radius = stoneRadius * 1.5f
+                        ),
+                        radius = stoneRadius,
+                        center = Offset(centerX, centerY)
+                      )
+                      drawCircle(
+                        color = Color.Black.copy(alpha = 0.15f),
+                        radius = stoneRadius,
+                        center = Offset(centerX, centerY),
+                        style = Stroke(width = 0.5.dp.toPx())
+                      )
+                      
+                      // Draw a solid white triangle in the center of the black preview stone
+                      val path = androidx.compose.ui.graphics.Path().apply {
+                        val size = 6.dp.toPx()
+                        moveTo(centerX, centerY - size)
+                        lineTo(centerX - size, centerY + size * 0.7f)
+                        lineTo(centerX + size, centerY + size * 0.7f)
+                        close()
+                      }
+                      drawPath(path = path, color = Color.White.copy(alpha = 0.8f))
+                    } else {
+                      drawCircle(
+                        brush = Brush.radialGradient(
+                          colors = listOf(Color.White.copy(alpha = 0.65f), Color(0xFFDDDDDD).copy(alpha = 0.65f)),
+                          center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                          radius = stoneRadius * 1.5f
+                        ),
+                        radius = stoneRadius,
+                        center = Offset(centerX, centerY)
+                      )
+                      drawCircle(
+                        color = Color.Black.copy(alpha = 0.15f),
+                        radius = stoneRadius,
+                        center = Offset(centerX, centerY),
+                        style = Stroke(width = 0.5.dp.toPx())
+                      )
+                      
+                      // Draw a solid black triangle in the center of the white preview stone
+                      val path = androidx.compose.ui.graphics.Path().apply {
+                        val size = 6.dp.toPx()
+                        moveTo(centerX, centerY - size)
+                        lineTo(centerX - size, centerY + size * 0.7f)
+                        lineTo(centerX + size, centerY + size * 0.7f)
+                        close()
+                      }
+                      drawPath(path = path, color = Color.Black.copy(alpha = 0.8f))
+                    }
                   }
                 }
+              }
               }
             }
 
@@ -756,7 +800,7 @@ class GameFragment : Fragment() {
                         currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
                         
                         checkGameEnd()
-
+ 
                         if (finalScoreText == null) {
                             if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
                                 handleAiMove(Stone.WHITE)
@@ -777,9 +821,9 @@ class GameFragment : Fragment() {
                     backgroundColor = Color.LightGray.copy(alpha = 0.5f)
                   )
                 ) {
-                  Text("PASS", fontWeight = FontWeight.Bold)
+                  Text(context.getString(R.string.btn_pass), fontWeight = FontWeight.Bold)
                 }
-
+ 
                 // Place Button (Circular)
                 Button(
                   onClick = {
@@ -822,11 +866,11 @@ class GameFragment : Fragment() {
                   shape = CircleShape,
                   elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
                 ) {
-                  Text("PLACE", fontWeight = FontWeight.Bold)
+                  Text(context.getString(R.string.btn_place), fontWeight = FontWeight.Bold)
                 }
               }
             }
-
+ 
             // --- Bottom Row: Undo - New Game - Redo ---
             Row(
               modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -853,7 +897,7 @@ class GameFragment : Fragment() {
               ) {
                 Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
               }
-
+ 
               // New Game Button
               Button(
                 onClick = { showSettings = true },
@@ -865,7 +909,7 @@ class GameFragment : Fragment() {
                 ),
                 elevation = ButtonDefaults.elevation(4.dp)
               ) {
-                Text("NEW GAME", fontWeight = FontWeight.Bold)
+                Text(context.getString(R.string.btn_new_game), fontWeight = FontWeight.Bold)
               }
 
               // Redo Button
@@ -913,7 +957,7 @@ class GameFragment : Fragment() {
                   ) {
                     // --- Title ---
                     Text(
-                      "New Game",
+                      context.getString(R.string.title_new_game),
                       style = MaterialTheme.typography.h5,
                       fontWeight = FontWeight.Bold,
                       modifier = Modifier.padding(top = 24.dp, start = 24.dp, end = 24.dp, bottom = 16.dp)
@@ -928,7 +972,7 @@ class GameFragment : Fragment() {
                     ) {
                       // --- Model Selection ---
                       Text(
-                        "AI ENGINE",
+                        context.getString(R.string.section_ai_engine),
                         style = MaterialTheme.typography.overline,
                         color = MaterialTheme.colors.primary,
                         fontWeight = FontWeight.Bold
@@ -960,12 +1004,12 @@ class GameFragment : Fragment() {
                           )
                           Column(modifier = Modifier.padding(start = 16.dp)) {
                             Text(
-                              "Mobile (10b)",
+                              context.getString(R.string.engine_mobile_title),
                               style = MaterialTheme.typography.subtitle1,
                               fontWeight = FontWeight.Bold,
                               color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
                             )
-                            Text("Fast, balanced performance", style = MaterialTheme.typography.caption)
+                            Text(context.getString(R.string.engine_mobile_desc), style = MaterialTheme.typography.caption)
                           }
                           Spacer(Modifier.weight(1f))
                           RadioButton(
@@ -980,7 +1024,7 @@ class GameFragment : Fragment() {
 
                       // --- Handicap Selection ---
                       Text(
-                        "HANDICAP",
+                        context.getString(R.string.section_handicap),
                         style = MaterialTheme.typography.overline,
                         color = MaterialTheme.colors.primary,
                         fontWeight = FontWeight.Bold
@@ -1007,7 +1051,7 @@ class GameFragment : Fragment() {
                           ) {
                             Box(contentAlignment = Alignment.Center) {
                               Text(
-                                text = if (h == 0) "None" else h.toString(),
+                                text = if (h == 0) context.getString(R.string.handicap_none) else h.toString(),
                                 color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
                                 style = MaterialTheme.typography.button,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
@@ -1021,7 +1065,7 @@ class GameFragment : Fragment() {
 
                       // --- AI Strength Selection ---
                       Text(
-                        "AI STRENGTH",
+                        context.getString(R.string.section_ai_strength),
                         style = MaterialTheme.typography.overline,
                         color = MaterialTheme.colors.primary,
                         fontWeight = FontWeight.Bold
@@ -1029,10 +1073,10 @@ class GameFragment : Fragment() {
                       Spacer(Modifier.height(8.dp))
                       
                       val levels = listOf(
-                        "Easy" to 100,
-                        "Amateur" to 500,
-                        "Advanced" to 1000,
-                        "Pro" to 2500
+                        context.getString(R.string.strength_easy) to 100,
+                        context.getString(R.string.strength_amateur) to 500,
+                        context.getString(R.string.strength_advanced) to 1000,
+                        context.getString(R.string.strength_pro) to 2500
                       )
                       
                       androidx.compose.foundation.lazy.LazyRow(
@@ -1066,7 +1110,7 @@ class GameFragment : Fragment() {
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                               )
                               Text(
-                                text = "$v visits",
+                                text = context.getString(R.string.strength_visits, v),
                                 color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
                                 style = MaterialTheme.typography.caption
                               )
@@ -1106,11 +1150,27 @@ class GameFragment : Fragment() {
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                           ) {
-                            val (label, desc, icon) = when(mode) {
-                              GameMode.USER_BLACK -> Triple("You are Black", "Traditional game", Icons.Default.Person)
-                              GameMode.USER_WHITE -> Triple("You are White", "Play with Handicap", Icons.Default.Person)
-                              GameMode.USER_BOTH -> Triple("Two Players", "Local multiplayer", Icons.Default.Groups)
-                              GameMode.AI_BOTH -> Triple("AI vs AI", "Engine self-play", Icons.Default.SmartToy)
+                             val (label, desc, icon) = when(mode) {
+                              GameMode.USER_BLACK -> Triple(
+                                context.getString(R.string.mode_user_black_title),
+                                context.getString(R.string.mode_user_black_desc),
+                                Icons.Default.Person
+                              )
+                              GameMode.USER_WHITE -> Triple(
+                                context.getString(R.string.mode_user_white_title),
+                                context.getString(R.string.mode_user_white_desc),
+                                Icons.Default.Person
+                              )
+                              GameMode.USER_BOTH -> Triple(
+                                context.getString(R.string.mode_user_both_title),
+                                context.getString(R.string.mode_user_both_desc),
+                                Icons.Default.Groups
+                              )
+                              GameMode.AI_BOTH -> Triple(
+                                context.getString(R.string.mode_ai_both_title),
+                                context.getString(R.string.mode_ai_both_desc),
+                                Icons.Default.SmartToy
+                              )
                             }
                             
                             Box(
@@ -1172,7 +1232,7 @@ class GameFragment : Fragment() {
                         onClick = { showSettings = false },
                         modifier = Modifier.height(48.dp)
                       ) {
-                        Text("CANCEL", color = Color.Gray, fontWeight = FontWeight.Bold)
+                        Text(context.getString(R.string.btn_cancel), color = Color.Gray, fontWeight = FontWeight.Bold)
                       }
                       Button(
                         onClick = {
@@ -1187,7 +1247,7 @@ class GameFragment : Fragment() {
                           .padding(horizontal = 8.dp),
                         elevation = ButtonDefaults.elevation(defaultElevation = 4.dp)
                       ) {
-                        Text("START GAME", fontWeight = FontWeight.Bold)
+                        Text(context.getString(R.string.btn_start), fontWeight = FontWeight.Bold)
                       }
                     }
                   }

@@ -11,6 +11,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.FragmentContainerView
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.android.material.color.DynamicColors
 
 class MainActivity : AppCompatActivity() {
@@ -18,6 +19,7 @@ class MainActivity : AppCompatActivity() {
   private lateinit var fragmentContainer: FragmentContainerView
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    installSplashScreen()
     super.onCreate(savedInstanceState)
     DynamicColors.applyToActivityIfAvailable(this)
     WindowCompat.setDecorFitsSystemWindows(window, false)

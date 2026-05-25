@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar" />
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:windowTranslucentStatus">true</item>
+    </style>
+
+    <!-- Modern Jetpack Splash Screen theme -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Set background color to black or matching theme -->
+        <item name="windowSplashScreenBackground">#121212</item>
+        <!-- The modern icon with transparent corners -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <!-- Keep the logo matching our core app icon -->
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
 </resources>
