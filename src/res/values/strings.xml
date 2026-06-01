@@ -40,4 +40,16 @@
     <!-- Dialog Actions -->
     <string name="btn_cancel">CANCEL</string>
     <string name="btn_start">START</string>
+
+    <!-- Error messages and Dialog titles -->
+    <string name="error_title_init_failed">Engine Initialization Failed</string>
+    <string name="error_title_asset_failure">Asset Extraction Failure</string>
+    <string name="error_msg_generic_init_error">An unexpected error occurred while initializing the KataGo AI engine: Code %d.</string>
+    <string name="error_msg_no_disk_space">Insufficient storage space to extract the AI model. Please free up at least 250MB of space and try again.</string>
+    <string name="error_msg_corrupt_assets">Engine configuration assets appear to be corrupt or missing. Please re-install the application.</string>
+    <string name="error_msg_missing_model">The selected AI model file could not be found on the device: Code %d.</string>
+    <string name="error_msg_gpu_error">A fatal graphics acceleration error occurred during GPU tuning (Step %d). Choose another model or restart the application.</string>
+    <string name="error_msg_engine_crash">The engine encountered a critical crash during configuration processing (Step %d).</string>
+    <string name="btn_retry">RETRY</string>
+    <string name="btn_dismiss">DISMISS</string>
 </resources>

@@ -13,7 +13,13 @@ public class KataGoBridge {
      * Initializes the KataGo engine with the provided configuration and model paths.
      * @param configPath Path to the .cfg file.
      * @param modelPath Path to the .bin.gz or .txt.gz model file.
-     * @return 0 on success, non-zero on failure.
+     * @return 0 on success, negative integer indicating failure:
+     *         -1: Config file not found.
+     *         -2: Model file not found.
+     *         -3: Core hash/table initialization failed (legacy).
+     *         -4: Asset copy extraction failed.
+     *         -5: Java-level or general platform exception during copying or init.
+     *         -10 to -18: C++ engine failure steps matching C++ code setup sequence.
      */
     public native int init(String configPath, String modelPath);
 

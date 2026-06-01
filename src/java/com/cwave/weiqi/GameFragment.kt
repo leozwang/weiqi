@@ -93,7 +93,8 @@ class GameFragment : Fragment() {
       setContent {
         MaterialTheme {
           var isEngineInitialized by remember { mutableStateOf(false) }
-          var isThinking by remember { mutableStateOf(false) }
+          var isThinking by remember { mutableStateOf(true) }
+          var engineError by remember { mutableStateOf<Int?>(null) }
           val context = androidx.compose.ui.platform.LocalContext.current
           var statusText by remember { mutableStateOf(context.getString(R.string.initializing_engine)) }
 
@@ -108,10 +109,58 @@ class GameFragment : Fragment() {
               isThinking = isThinking,
               onThinkingChange = { isThinking = it },
               statusText = statusText,
-              onStatusTextChange = { statusText = it }
+              onStatusTextChange = { statusText = it },
+              engineError = engineError,
+              onEngineErrorChange = { engineError = it }
             )
 
-            if (!isEngineInitialized && isThinking) {
+            if (engineError != null) {
+              val errorCode = engineError!!
+              val (title, message) = when (errorCode) {
+                -1 -> context.getString(R.string.error_title_init_failed) to context.getString(R.string.error_msg_corrupt_assets)
+                -2 -> context.getString(R.string.error_title_init_failed) to context.getString(R.string.error_msg_missing_model, errorCode)
+                -4 -> context.getString(R.string.error_title_asset_failure) to context.getString(R.string.error_msg_corrupt_assets)
+                -6 -> context.getString(R.string.error_title_asset_failure) to context.getString(R.string.error_msg_no_disk_space)
+                in -15..-10 -> context.getString(R.string.error_title_init_failed) to context.getString(R.string.error_msg_gpu_error, -errorCode)
+                in -18..-16 -> context.getString(R.string.error_title_init_failed) to context.getString(R.string.error_msg_engine_crash, -errorCode)
+                else -> context.getString(R.string.error_title_init_failed) to context.getString(R.string.error_msg_generic_init_error, errorCode)
+              }
+
+              AlertDialog(
+                onDismissRequest = { /* Force user to resolve or exit */ },
+                shape = RoundedCornerShape(28.dp),
+                title = {
+                  Text(text = title, style = MaterialTheme.typography.h6, fontWeight = FontWeight.Bold)
+                },
+                text = {
+                  Text(text = message, style = MaterialTheme.typography.body1)
+                },
+                confirmButton = {
+                  Button(
+                    onClick = {
+                      engineError = null
+                      // Trigger re-initialization of screen
+                      isThinking = true
+                      statusText = context.getString(R.string.initializing_engine)
+                    },
+                    shape = RoundedCornerShape(24.dp)
+                  ) {
+                    Text(context.getString(R.string.btn_retry), fontWeight = FontWeight.Bold)
+                  }
+                },
+                dismissButton = {
+                  TextButton(
+                    onClick = {
+                      engineError = null
+                    }
+                  ) {
+                    Text(context.getString(R.string.btn_dismiss), fontWeight = FontWeight.Bold, color = Color.Gray)
+                  }
+                }
+              )
+            }
+
+            if (!isEngineInitialized && isThinking && engineError == null) {
               Box(
                 modifier = Modifier
                   .fillMaxSize()
@@ -164,7 +213,9 @@ class GameFragment : Fragment() {
     isThinking: Boolean,
     onThinkingChange: (Boolean) -> Unit,
     statusText: String,
-    onStatusTextChange: (String) -> Unit
+    onStatusTextChange: (String) -> Unit,
+    engineError: Int?,
+    onEngineErrorChange: (Int?) -> Unit
   ) {
     val scope = rememberCoroutineScope()
     var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
@@ -307,6 +358,7 @@ class GameFragment : Fragment() {
         val res = initEngine(m)
         if (res != 0) {
           onStatusTextChange("Engine Init Failed: $res")
+          onEngineErrorChange(res)
           onThinkingChange(false)
           return
         }
@@ -368,17 +420,19 @@ class GameFragment : Fragment() {
       }
     }
 
-    LaunchedEffect(Unit) {
-      onThinkingChange(true)
-      onStatusTextChange(requireContext().getString(R.string.tuning_gpu))
-      val result = initEngine(currentModelName)
-      onThinkingChange(false)
-      if (result == 0) {
-        onEngineInitializedChange(true)
-        onStatusTextChange("Engine ready.")
-        showSettings = true
-      } else {
-        onStatusTextChange("Engine Init Failed: $result")
+    LaunchedEffect(isThinking, engineError) {
+      if (isThinking && !isEngineInitialized && engineError == null) {
+        onStatusTextChange(requireContext().getString(R.string.tuning_gpu))
+        val result = initEngine(currentModelName)
+        onThinkingChange(false)
+        if (result == 0) {
+          onEngineInitializedChange(true)
+          onStatusTextChange("Engine ready.")
+          showSettings = true
+        } else {
+          onStatusTextChange("Engine Init Failed: $result")
+          onEngineErrorChange(result)
+        }
       }
     }
 
@@ -1332,11 +1386,21 @@ class GameFragment : Fragment() {
 
   private suspend fun initEngine(modelName: String): Int = withContext(Dispatchers.IO) {
     try {
+      // Check disk space for safety first
+      val usableSpace = requireContext().filesDir.usableSpace
+      if (usableSpace < 50 * 1024 * 1024L) { // absolute minimum 50MB
+        Log.e("GameFragment", "Aborting engine init: critical storage low ($usableSpace bytes).")
+        return@withContext -6
+      }
+
       val configPath = copyAssetToFile("gtp.cfg")
       val modelPath = copyAssetToFile(modelName)
       if (configPath == null || modelPath == null) {
         Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
-        return@withContext -4
+        if (usableSpace < 230 * 1024 * 1024L) { // ~230MB model extraction space
+          return@withContext -6 // Storage Space Error
+        }
+        return@withContext -4 // General Asset Copy Error
       }
 
       Log.i("GameFragment", "Starting KataGo Engine Init with model $modelName...")
@@ -1359,6 +1423,20 @@ class GameFragment : Fragment() {
       return destFile.absolutePath
     }
 
+    // Defensive Check: Verify Usable Space before copying large assets
+    val requiredBytes = try {
+      requireContext().assets.openFd(assetName).use { it.length }
+    } catch (e: Exception) {
+      // For compressed files or assets where openFd isn't supported, fallback to estimated thresholds
+      if (assetName.endsWith(".gz")) 180 * 1024 * 1024L else 1024 * 1024L
+    }
+
+    val usableSpace = requireContext().filesDir.usableSpace
+    if (usableSpace < requiredBytes + (15 * 1024 * 1024L)) { // require 15MB safety buffer
+      Log.e("GameFragment", "Insufficient space to extract $assetName. Required: $requiredBytes, Usable: $usableSpace")
+      return null
+    }
+
     val tempFile = File(requireContext().filesDir, "$assetName.tmp")
     try {
       Log.i("GameFragment", "Extracting asset $assetName to internal storage...")
@@ -1367,6 +1445,13 @@ class GameFragment : Fragment() {
           inputStream.copyTo(outputStream)
         }
       }
+      
+      // Validate copy integrity by verifying size > 0
+      if (tempFile.length() == 0L) {
+        Log.e("GameFragment", "Integrity Check Failed: Extracted file $assetName size is 0 bytes.")
+        return null
+      }
+
       if (tempFile.renameTo(destFile)) {
         Log.i("GameFragment", "Successfully extracted $assetName")
         return destFile.absolutePath
@@ -1379,7 +1464,7 @@ class GameFragment : Fragment() {
       return null
     } finally {
       if (tempFile.exists()) tempFile.delete()
-      }
+    }
   }
 
   private fun toGtpCoords(x: Int, y: Int): String {
