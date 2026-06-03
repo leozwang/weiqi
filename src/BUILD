@@ -87,6 +87,7 @@ kt_android_library(
         "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android",
         "@maven//:com_google_guava_listenablefuture",
         "@maven//:com_anthropic_anthropic_java",
+        "@maven//:com_android_billingclient_billing_ktx",
     ],
 )
 
