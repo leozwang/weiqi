@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Lock
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +62,12 @@ import kotlin.math.roundToInt
 class GameFragment : Fragment() {
   private val bridge = KataGoBridge()
   private val boardSize = 19
+  private lateinit var billingManager: BillingManager
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    billingManager = BillingManager(requireContext(), lifecycleScope)
+  }
 
   enum class Stone { EMPTY, BLACK, WHITE }
   enum class GameMode { USER_BLACK, USER_WHITE, USER_BOTH, AI_BOTH }
@@ -104,6 +113,7 @@ class GameFragment : Fragment() {
           ) {
             GameScreen(
               bridge = bridge,
+              billingManager = billingManager,
               isEngineInitialized = isEngineInitialized,
               onEngineInitializedChange = { isEngineInitialized = it },
               isThinking = isThinking,
@@ -208,6 +218,7 @@ class GameFragment : Fragment() {
   @Composable
   fun GameScreen(
     bridge: KataGoBridge,
+    billingManager: BillingManager,
     isEngineInitialized: Boolean,
     onEngineInitializedChange: (Boolean) -> Unit,
     isThinking: Boolean,
@@ -218,6 +229,8 @@ class GameFragment : Fragment() {
     onEngineErrorChange: (Int?) -> Unit
   ) {
     val scope = rememberCoroutineScope()
+    val isPremiumUnlocked by billingManager.isPremiumUnlocked.collectAsState()
+    val productDetails by billingManager.productDetails.collectAsState()
     var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
     var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var lastMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -231,7 +244,7 @@ class GameFragment : Fragment() {
     var showSettings by remember { mutableStateOf(false) }
     var handicap by remember { mutableStateOf(0) }
     var currentModelName by remember { mutableStateOf("model.bin.gz") }
-    var currentVisits by remember { mutableStateOf(1000) }
+    var currentVisits by remember { mutableStateOf(500) }
 
     var moveHistory by remember { mutableStateOf(listOf<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
@@ -1024,53 +1037,175 @@ class GameFragment : Fragment() {
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 24.dp)
                     ) {
-                      // --- Model Selection ---
+                      if (!isPremiumUnlocked) {
+                        Surface(
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 20.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable {
+                              billingManager.launchPurchaseFlow(requireActivity())
+                            },
+                          color = MaterialTheme.colors.primary.copy(alpha = 0.08f),
+                          border = BorderStroke(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.3f))
+                        ) {
+                          Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                          ) {
+                            Icon(
+                              imageVector = Icons.Default.Stars,
+                              contentDescription = "Unlock Premium",
+                              tint = Color(0xFFFFD700), // Gold
+                              modifier = Modifier.size(36.dp)
+                            )
+                            Column(modifier = Modifier.padding(start = 16.dp)) {
+                              Text(
+                                text = context.getString(R.string.iap_promo_title),
+                                style = MaterialTheme.typography.subtitle1,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colors.primary
+                              )
+                              Spacer(Modifier.height(4.dp))
+                              Text(
+                                text = context.getString(R.string.iap_promo_desc),
+                                style = MaterialTheme.typography.body2,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.8f)
+                              )
+                            }
+                          }
+                        }
+                      }
+
+                      if (false) {
+                        // --- Model Selection ---
+                        Text(
+                          context.getString(R.string.section_ai_engine),
+                          style = MaterialTheme.typography.overline,
+                          color = MaterialTheme.colors.primary,
+                          fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        
+                        Surface(
+                          modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .pointerInput(Unit) {
+                              detectTapGestures { currentModelName = "model.bin.gz" }
+                            },
+                          color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
+                          border = BorderStroke(
+                            width = if (currentModelName == "model.bin.gz") 2.dp else 1.dp,
+                            color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
+                          )
+                        ) {
+                          Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                          ) {
+                            Icon(
+                              Icons.Default.Memory,
+                              contentDescription = null,
+                              tint = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.Gray,
+                              modifier = Modifier.size(32.dp)
+                            )
+                            Column(modifier = Modifier.padding(start = 16.dp)) {
+                              Text(
+                                context.getString(R.string.engine_mobile_title),
+                                style = MaterialTheme.typography.subtitle1,
+                                fontWeight = FontWeight.Bold,
+                                color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
+                              )
+                              Text(context.getString(R.string.engine_mobile_desc), style = MaterialTheme.typography.caption)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            RadioButton(
+                              selected = currentModelName == "model.bin.gz",
+                              onClick = { currentModelName = "model.bin.gz" },
+                              colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
+                            )
+                          }
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+                      }
+
+
+
+                      // --- AI Strength Selection ---
                       Text(
-                        context.getString(R.string.section_ai_engine),
+                        context.getString(R.string.section_ai_strength),
                         style = MaterialTheme.typography.overline,
                         color = MaterialTheme.colors.primary,
                         fontWeight = FontWeight.Bold
                       )
                       Spacer(Modifier.height(8.dp))
                       
-                      Surface(
-                        modifier = Modifier
-                          .fillMaxWidth()
-                          .clip(RoundedCornerShape(12.dp))
-                          .pointerInput(Unit) {
-                            detectTapGestures { currentModelName = "model.bin.gz" }
-                          },
-                        color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
-                        border = BorderStroke(
-                          width = if (currentModelName == "model.bin.gz") 2.dp else 1.dp,
-                          color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
-                        )
+                      val levels = listOf(
+                        context.getString(R.string.strength_easy) to 100,
+                        context.getString(R.string.strength_amateur) to 500,
+                        context.getString(R.string.strength_advanced) to 1000,
+                        context.getString(R.string.strength_pro) to 2500
+                      )
+                      
+                      androidx.compose.foundation.lazy.LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
                       ) {
-                        Row(
-                          modifier = Modifier.padding(16.dp),
-                          verticalAlignment = Alignment.CenterVertically
-                        ) {
-                          Icon(
-                            Icons.Default.Memory,
-                            contentDescription = null,
-                            tint = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.Gray,
-                            modifier = Modifier.size(32.dp)
-                          )
-                          Column(modifier = Modifier.padding(start = 16.dp)) {
-                            Text(
-                              context.getString(R.string.engine_mobile_title),
-                              style = MaterialTheme.typography.subtitle1,
-                              fontWeight = FontWeight.Bold,
-                              color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
-                            )
-                            Text(context.getString(R.string.engine_mobile_desc), style = MaterialTheme.typography.caption)
+                        items(levels.size) { index ->
+                          val (label, v) = levels[index]
+                          val isSelected = currentVisits == v
+                          val isPremiumItem = v >= 1000
+                          Surface(
+                            modifier = Modifier
+                              .size(width = 100.dp, height = 56.dp)
+                              .clip(RoundedCornerShape(16.dp))
+                              .pointerInput(v, isPremiumUnlocked) {
+                                detectTapGestures {
+                                  if (isPremiumItem && !isPremiumUnlocked) {
+                                    billingManager.launchPurchaseFlow(requireActivity())
+                                  } else {
+                                    currentVisits = v
+                                  }
+                                }
+                              },
+                            color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
+                            elevation = if (isSelected) 6.dp else 0.dp,
+                            border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
+                          ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                              Column(
+                                  modifier = Modifier.fillMaxSize(),
+                                  horizontalAlignment = Alignment.CenterHorizontally,
+                                  verticalArrangement = Arrangement.Center
+                              ) {
+                                Text(
+                                  text = label,
+                                  color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
+                                  style = MaterialTheme.typography.button,
+                                  fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Text(
+                                  text = context.getString(R.string.strength_visits, v),
+                                  color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
+                                  style = MaterialTheme.typography.caption
+                                )
+                              }
+                              if (isPremiumItem && !isPremiumUnlocked) {
+                                Icon(
+                                  imageVector = Icons.Default.Lock,
+                                  contentDescription = "Premium Locked",
+                                  tint = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.6f) else Color.Gray,
+                                  modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 4.dp, end = 4.dp)
+                                    .size(14.dp)
+                                )
+                              }
+                            }
                           }
-                          Spacer(Modifier.weight(1f))
-                          RadioButton(
-                            selected = currentModelName == "model.bin.gz",
-                            onClick = { currentModelName = "model.bin.gz" },
-                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
-                          )
                         }
                       }
 
@@ -1109,64 +1244,6 @@ class GameFragment : Fragment() {
                                 color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
                                 style = MaterialTheme.typography.button,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
-                              )
-                            }
-                          }
-                        }
-                      }
-
-                      Spacer(modifier = Modifier.height(24.dp))
-
-                      // --- AI Strength Selection ---
-                      Text(
-                        context.getString(R.string.section_ai_strength),
-                        style = MaterialTheme.typography.overline,
-                        color = MaterialTheme.colors.primary,
-                        fontWeight = FontWeight.Bold
-                      )
-                      Spacer(Modifier.height(8.dp))
-                      
-                      val levels = listOf(
-                        context.getString(R.string.strength_easy) to 100,
-                        context.getString(R.string.strength_amateur) to 500,
-                        context.getString(R.string.strength_advanced) to 1000,
-                        context.getString(R.string.strength_pro) to 2500
-                      )
-                      
-                      androidx.compose.foundation.lazy.LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                      ) {
-                        items(levels.size) { index ->
-                          val (label, v) = levels[index]
-                          val isSelected = currentVisits == v
-                          Surface(
-                            modifier = Modifier
-                              .size(width = 100.dp, height = 56.dp)
-                              .clip(RoundedCornerShape(16.dp))
-                              .pointerInput(v) {
-                                detectTapGestures { currentVisits = v }
-                              },
-                            color = if (isSelected) MaterialTheme.colors.primary else MaterialTheme.colors.surface,
-                            elevation = if (isSelected) 6.dp else 0.dp,
-                            border = if (isSelected) null else BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.6f))
-                          ) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                              Text(
-                                text = label,
-                                color = if (isSelected) MaterialTheme.colors.onPrimary else MaterialTheme.colors.onSurface,
-                                style = MaterialTheme.typography.button,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                              )
-                              Text(
-                                text = context.getString(R.string.strength_visits, v),
-                                color = if (isSelected) MaterialTheme.colors.onPrimary.copy(alpha = 0.8f) else Color.Gray,
-                                style = MaterialTheme.typography.caption
                               )
                             }
                           }

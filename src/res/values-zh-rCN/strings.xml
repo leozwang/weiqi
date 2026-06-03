@@ -37,7 +37,19 @@
     <string name="mode_ai_both_title">AI对局</string>
     <string name="mode_ai_both_desc">引擎自我研讨</string>
     
-    <!-- Dialog Actions -->
-    <string name="btn_cancel">取消</string>
-    <string name="btn_start">开始对局</string>
+    <!-- Error messages and Dialog titles -->
+    <string name="error_title_init_failed">引擎初始化失败</string>
+    <string name="error_title_asset_failure">资源提取失败</string>
+    <string name="error_msg_generic_init_error">初始化 KataGo AI 引擎时发生未知错误：代码 %d。</string>
+    <string name="error_msg_no_disk_space">存储空间不足，无法解压AI模型。请清理至少 250MB 空间并重试。</string>
+    <string name="error_msg_corrupt_assets">引擎配置文件损坏或丢失。请重新安装应用。</string>
+    <string name="error_msg_missing_model">在设备上找不到所选的 AI 模型文件：代码 %d。</string>
+    <string name="error_msg_gpu_error">GPU 调优期间发生严重的图形加速错误 (步骤 %d)。请选择其他模型或重启应用。</string>
+    <string name="error_msg_engine_crash">引擎在处理配置时发生严重崩溃 (步骤 %d)。</string>
+    <string name="btn_retry">重试</string>
+    <string name="btn_dismiss">忽略</string>
+
+    <!-- IAP promo strings -->
+    <string name="iap_promo_title">解锁高级AI功能</string>
+    <string name="iap_promo_desc">一次性购买即可永久解锁高级和职业级难度。</string>
 </resources>

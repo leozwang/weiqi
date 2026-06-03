@@ -17,7 +17,7 @@ class BillingManager(
 
     companion object {
         private const val TAG = "BillingManager"
-        const val PREMIUM_UNLOCK_ID = "premium_unlock"
+        const val PREMIUM_UNLOCK_ID = "weiqi_one_time_product"
     }
 
     private val billingClient = BillingClient.newBuilder(context)
