@@ -167,3 +167,69 @@ KataGo has four backends, OpenCL (GPU), CUDA (GPU), TensorRT (GPU), and Eigen (C
 
 https://github.com/kaya-go
 
+
+## Testing In-App Purchases (IAP)
+
+To test the premium unlock (`weiqi_one_time_product`), you need to use Google Play's billing testing sandbox. Since the app uses the official Google Play Billing Library, testing cannot be done purely offline or with a debug build that isn't registered with Google Play.
+
+Follow these steps to set up and perform IAP testing:
+
+### 1. Google Play Console Configuration
+
+Before testing, you must have access to a Google Play Developer account and have the app registered.
+
+1.  **Package Name**: Ensure your app's package name (`com.cwave.weiqi`) is registered in your Google Play Console. If you rename the app, update `applicationId` in `src/BUILD` and `AndroidManifest.xml` accordingly.
+2.  **Create In-App Product**:
+    *   In the Play Console, go to **Monetize** > **Products** > **In-app products**.
+    *   Click **Create product**.
+    *   Set **Product ID** to `weiqi_one_time_product` (this must match `PREMIUM_UNLOCK_ID` in `BillingManager.kt`).
+    *   Fill in the name, description, and price, then click **Save** and **Activate**.
+3.  **Configure License Testing**:
+    *   Go to **Setup** > **License testing**.
+    *   In the **License testers** field, add the Gmail addresses of your test accounts.
+    *   Set **License response** to `RESPOND_NORMALLY`.
+
+### 2. Distribute the Test Build
+
+Google Play Billing only works if the app is installed via Google Play (so Play Store can manage the purchase state).
+
+1.  **Build the Release AAB**:
+    ```bash
+    bazel build -c opt --config=android_arm64-v8a //src:release_bundle
+    ```
+    This generates `bazel-bin/src/release.aab`.
+2.  **Upload to Internal Testing**:
+    *   In Play Console, go to **Testing** > **Internal testing**.
+    *   Create a new release and upload the `release.aab` file.
+    *   Add your test Gmail accounts to the testers list for this track.
+    *   Copy the **Join on the web** link (tester opt-in URL) and share it with your testers.
+3.  **Accept Invitation**:
+    *   On the test device (or a browser logged into the test Gmail account), open the opt-in link.
+    *   Accept the invitation to join the test program.
+
+### 3. Perform the Test on Device
+
+1.  **Prepare Device**:
+    *   Ensure the test device is logged into Google Play Store with the registered tester Gmail account.
+    *   If you have a debug version of the app installed locally via `adb install`, uninstall it first to avoid signature conflicts.
+2.  **Install the App**:
+    *   Use the link provided in the opt-in page ("download it on Google Play") to open the Play Store page for the app and install it.
+3.  **Execute Purchase**:
+    *   Open the app and trigger the premium unlock flow.
+    *   The Google Play Billing dialog should appear.
+    *   It should indicate that this is a test purchase and display payment options like **"Test card, always approves"** or **"Test card, always declines"**.
+    *   Select **"Test card, always approves"** and complete the purchase.
+    *   Verify that the app successfully unlocks the premium features.
+
+### 4. Resetting the Purchase for Re-testing
+
+Since the premium unlock is a non-consumable product, once purchased, it remains owned by the test account. To test the purchase flow again, you must revoke the purchase:
+
+1.  In Google Play Console, go to **Order management**.
+2.  Find the test transaction.
+3.  Click on the order and select **Refund** or **Void**.
+4.  Ensure you check the option to **Revoke access** to the product.
+5.  Clear the cache/data of the Play Store app on the test device, or wait a few minutes for the purchase state to sync.
+6.  Reopen the app; the premium features should be locked again, allowing you to test the purchase flow once more.
+
+
