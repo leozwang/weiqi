@@ -51,6 +51,7 @@
     <string name="error_msg_gpu_error">A fatal graphics acceleration error occurred during GPU tuning (Step %d). Choose another model or restart the application.</string>
     <string name="error_msg_engine_crash">The engine encountered a critical crash during configuration processing (Step %d).</string>
     <string name="btn_retry">RETRY</string>
+    <string name="btn_dismiss">DISMISS</string>
     <!-- IAP promo strings -->
     <string name="iap_promo_title">Unlock Premium AI</string>
     <string name="iap_promo_desc">Purchase once to unlock both Advanced and Pro settings forever.</string>

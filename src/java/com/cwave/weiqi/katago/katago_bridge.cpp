@@ -526,3 +526,23 @@ Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(JNIEnv* env, jobject thiz) {
     initialized = false;
     LOGI("Engine shutdown complete.");
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeEigen_init(JNIEnv *env, jobject thiz, jstring config_path, jstring model_path) {
+    return Java_com_cwave_weiqi_katago_KataGoBridge_init(env, thiz, config_path, model_path);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeEigen_sendGtpCommand(JNIEnv* env, jobject thiz, jstring command) {
+    return Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(env, thiz, command);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeEigen_getBoardState(JNIEnv* env, jobject thiz) {
+    return Java_com_cwave_weiqi_katago_KataGoBridge_getBoardState(env, thiz);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeEigen_shutdown(JNIEnv* env, jobject thiz) {
+    Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(env, thiz);
+}

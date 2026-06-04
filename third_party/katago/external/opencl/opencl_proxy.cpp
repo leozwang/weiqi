@@ -12,6 +12,7 @@ static void* g_handle = nullptr;
 static void* get_func(const char* name) {
     if (!g_handle) {
         const char* paths[] = {
+            "/data/data/com.cwave.weiqi/files/libOpenCL.so",
             "/vendor/lib64/libOpenCL.so",
             "/system/vendor/lib64/libOpenCL.so",
             "/system/lib64/libOpenCL.so",
@@ -20,7 +21,12 @@ static void* get_func(const char* name) {
         };
         for (const char* path : paths) {
             g_handle = dlopen(path, RTLD_NOW);
-            if (g_handle) break;
+            if (g_handle) {
+                break;
+            } else {
+                const char* err = dlerror();
+                LOGE("dlopen(%s) failed: %s", path, err ? err : "unknown error");
+            }
         }
     }
     if (!g_handle) return nullptr;

@@ -1,6 +1,6 @@
 package com.cwave.weiqi.katago;
 
-public class KataGoBridge {
+public class KataGoBridge implements IKataGoBridge {
     static {
         try {
             System.loadLibrary("katago_opencl");

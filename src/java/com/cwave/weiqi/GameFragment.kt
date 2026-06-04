@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.fragment.app.Fragment
+import com.cwave.weiqi.katago.IKataGoBridge
 import com.cwave.weiqi.katago.KataGoBridge
+import com.cwave.weiqi.katago.KataGoBridgeEigen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,7 +62,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class GameFragment : Fragment() {
-  private val bridge = KataGoBridge()
+  private var bridge: IKataGoBridge = KataGoBridge()
   private val boardSize = 19
   private lateinit var billingManager: BillingManager
 
@@ -217,7 +219,7 @@ class GameFragment : Fragment() {
 
   @Composable
   fun GameScreen(
-    bridge: KataGoBridge,
+    bridge: IKataGoBridge,
     billingManager: BillingManager,
     isEngineInitialized: Boolean,
     onEngineInitializedChange: (Boolean) -> Unit,
@@ -1481,8 +1483,19 @@ class GameFragment : Fragment() {
       }
 
       Log.i("GameFragment", "Starting KataGo Engine Init with model $modelName...")
-      val result = bridge.init(configPath, modelPath)
+      var result = bridge.init(configPath, modelPath)
       Log.i("GameFragment", "Engine Init Result: $result")
+      if (result in -18..-10) {
+        Log.w("GameFragment", "GPU initialization failed ($result). Falling back to CPU/Eigen backend...")
+        try {
+          bridge.shutdown()
+        } catch (e: Exception) {
+          Log.e("GameFragment", "Failed to shutdown GPU bridge", e)
+        }
+        bridge = KataGoBridgeEigen()
+        result = bridge.init(configPath, modelPath)
+        Log.i("GameFragment", "CPU/Eigen Engine Init Result: $result")
+      }
       result
     } catch (e: Exception) {
       Log.e("GameFragment", "Engine Init Exception", e)
@@ -1562,7 +1575,7 @@ class GameFragment : Fragment() {
     return x to y
   }
 
-  private suspend fun playMove(x: Int, y: Int, stone: Stone, bridge: KataGoBridge, onResult: (Boolean, String) -> Unit) {
+  private suspend fun playMove(x: Int, y: Int, stone: Stone, bridge: IKataGoBridge, onResult: (Boolean, String) -> Unit) {
     val color = if (stone == Stone.BLACK) "black" else "white"
     val moveStr = toGtpCoords(x, y)
     val response = withContext(Dispatchers.IO) {
@@ -1571,7 +1584,7 @@ class GameFragment : Fragment() {
     onResult(response.startsWith("="), moveStr)
   }
 
-  private suspend fun genAiMove(stone: Stone, bridge: KataGoBridge, onResult: (Int, Int, String) -> Unit) {
+  private suspend fun genAiMove(stone: Stone, bridge: IKataGoBridge, onResult: (Int, Int, String) -> Unit) {
     val color = if (stone == Stone.BLACK) "black" else "white"
     val response = withContext(Dispatchers.IO) {
       bridge.sendGtpCommand("genmove $color")
@@ -1592,7 +1605,7 @@ class GameFragment : Fragment() {
     }
   }
 
-  private fun syncBoardState(bridge: KataGoBridge): Array<Array<Stone>> {
+  private fun syncBoardState(bridge: IKataGoBridge): Array<Array<Stone>> {
     val rawBoard = bridge.boardState ?: return Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
     val newBoard = Array(boardSize) { Array(boardSize) { Stone.EMPTY } }
     for (y in 0 until boardSize) {
@@ -1608,7 +1621,7 @@ class GameFragment : Fragment() {
     return newBoard
   }
 
-  private suspend fun getAnalysis(bridge: KataGoBridge, perspective: Stone): AnalysisResult = withContext(Dispatchers.IO) {
+  private suspend fun getAnalysis(bridge: IKataGoBridge, perspective: Stone): AnalysisResult = withContext(Dispatchers.IO) {
     // Query analysis from specified perspective
     val colorStr = if (perspective == Stone.WHITE) "white" else "black"
     Log.i("GameFragment", "Requesting analysis for $colorStr...")

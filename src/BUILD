@@ -105,6 +105,7 @@ android_binary(
     deps = [
          ":lib",
          "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
+         "//src/java/com/cwave/weiqi/katago:libkatago_eigen_jni.so",
     ],
 )
 
@@ -137,6 +138,7 @@ android_application(
     deps = [
         ":lib",
         "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
+        "//src/java/com/cwave/weiqi/katago:libkatago_eigen_jni.so",
     ],
 )
 
