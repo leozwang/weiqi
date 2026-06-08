@@ -52,4 +52,6 @@
     <!-- IAP promo strings -->
     <string name="iap_promo_title">解锁高级AI功能</string>
     <string name="iap_promo_desc">一次性购买即可永久解锁高级和职业级难度。</string>
+    <string name="msg_ai_passed">AI 弃子</string>
 </resources>
+

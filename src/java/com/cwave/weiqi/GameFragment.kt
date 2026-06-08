@@ -349,6 +349,7 @@ class GameFragment : Fragment() {
           onStatusTextChange("Turn.")
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
+          android.widget.Toast.makeText(context, R.string.msg_ai_passed, android.widget.Toast.LENGTH_SHORT).show()
           consecutivePasses++
           currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
           onStatusTextChange("Turn.")

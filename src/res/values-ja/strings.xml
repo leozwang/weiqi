@@ -52,4 +52,6 @@
     <!-- IAP promo strings -->
     <string name="iap_promo_title">プレミアムAIを解放</string>
     <string name="iap_promo_desc">一度の購入で、上級およびプロ級の設定が永久に有効化されます。</string>
+    <string name="msg_ai_passed">AIがパスしました</string>
 </resources>
+

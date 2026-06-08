@@ -55,4 +55,6 @@
     <!-- IAP promo strings -->
     <string name="iap_promo_title">Unlock Premium AI</string>
     <string name="iap_promo_desc">Purchase once to unlock both Advanced and Pro settings forever.</string>
+    <string name="msg_ai_passed">AI passed</string>
 </resources>
+
