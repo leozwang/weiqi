@@ -9,6 +9,7 @@ cc_binary(
     linkopts = [
         "-ldl",
         "-llog",
+        "-Wl,-z,max-page-size=16384",
     ],
     deps = [":opencl_headers"],
 )

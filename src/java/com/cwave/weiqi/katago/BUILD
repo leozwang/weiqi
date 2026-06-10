@@ -25,6 +25,7 @@ cc_binary(
         "-static-libstdc++",
         "-static-libgcc",
         "-lunwind",
+        "-Wl,-z,max-page-size=16384",
     ],
     deps = [
         ":katago_jni_native",
@@ -70,6 +71,7 @@ cc_binary(
         "-static-libstdc++",
         "-static-libgcc",
         "-lunwind",
+        "-Wl,-z,max-page-size=16384",
     ],
     deps = [
         ":katago_jni_native_eigen",
