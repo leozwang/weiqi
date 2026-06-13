@@ -239,14 +239,23 @@ class GameFragment : Fragment() {
     var analysis by remember { mutableStateOf(AnalysisResult()) }
     var showAnalysis by remember { mutableStateOf(false) }
     
+    val sharedPrefs = remember { requireContext().getSharedPreferences("weiqi_settings", android.content.Context.MODE_PRIVATE) }
+    val initialModeName = remember { sharedPrefs.getString("current_mode", GameMode.USER_BLACK.name) ?: GameMode.USER_BLACK.name }
+    val initialMode = remember(initialModeName) {
+      try { GameMode.valueOf(initialModeName) } catch (e: Exception) { GameMode.USER_BLACK }
+    }
+
     var lastMoveText by remember { mutableStateOf("No moves yet") }
-    var currentMode by remember { mutableStateOf(GameMode.USER_BLACK) }
+    var currentMode by remember { mutableStateOf(initialMode) }
     var currentTurn by remember { mutableStateOf(Stone.BLACK) }
     var aiAutoPlay by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var handicap by remember { mutableStateOf(0) }
-    var currentModelName by remember { mutableStateOf("model.bin.gz") }
-    var currentVisits by remember { mutableStateOf(500) }
+    val initialHandicap = remember { sharedPrefs.getInt("handicap", 0) }
+    var handicap by remember { mutableStateOf(initialHandicap) }
+    val initialModelName = remember { sharedPrefs.getString("current_model_name", "model.bin.gz") ?: "model.bin.gz" }
+    var currentModelName by remember { mutableStateOf(initialModelName) }
+    val initialVisits = remember { sharedPrefs.getInt("current_visits", 500) }
+    var currentVisits by remember { mutableStateOf(initialVisits) }
 
     var moveHistory by remember { mutableStateOf(listOf<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
@@ -1368,9 +1377,15 @@ class GameFragment : Fragment() {
                       ) {
                         Text(context.getString(R.string.btn_cancel), color = Color.Gray, fontWeight = FontWeight.Bold)
                       }
-                      Button(
+                       Button(
                         onClick = {
                           showSettings = false
+                          sharedPrefs.edit()
+                            .putString("current_mode", currentMode.name)
+                            .putInt("handicap", handicap)
+                            .putString("current_model_name", currentModelName)
+                            .putInt("current_visits", currentVisits)
+                            .apply()
                           scope.launch {
                             startNewGame(currentMode, handicap, currentModelName, currentVisits)
                           }
