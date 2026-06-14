@@ -256,11 +256,34 @@ class GameFragment : Fragment() {
     var currentModelName by remember { mutableStateOf(initialModelName) }
     val initialVisits = remember { sharedPrefs.getInt("current_visits", 500) }
     var currentVisits by remember { mutableStateOf(initialVisits) }
+    val initialGameInProgress = remember { sharedPrefs.getBoolean("game_in_progress", false) }
+    var isGameInProgress by remember { mutableStateOf(initialGameInProgress) }
 
     var moveHistory by remember { mutableStateOf(listOf<String>()) }
     var historyIndex by remember { mutableStateOf(-1) }
     var consecutivePasses by remember { mutableStateOf(0) }
     var finalScoreText by remember { mutableStateOf<String?>(null) }
+
+    fun saveGameState(
+      history: List<String> = moveHistory,
+      idx: Int = historyIndex,
+      turn: Stone = currentTurn,
+      score: String? = finalScoreText,
+      passes: Int = consecutivePasses
+    ) {
+      val movesJson = org.json.JSONArray(history.take(idx + 1)).toString()
+      sharedPrefs.edit()
+        .putBoolean("game_in_progress", true)
+        .putString("saved_moves", movesJson)
+        .putString("current_turn", turn.name)
+        .putString("final_score_text", score)
+        .putInt("consecutive_passes", passes)
+        .putString("current_mode", currentMode.name)
+        .putInt("handicap", handicap)
+        .putString("current_model_name", currentModelName)
+        .putInt("current_visits", currentVisits)
+        .apply()
+    }
 
     // Automatically update analysis when turn changes or analysis is toggled ON
     LaunchedEffect(currentTurn, showAnalysis) {
@@ -324,16 +347,20 @@ class GameFragment : Fragment() {
       if (consecutivePasses >= 2) {
         onStatusTextChange("Game ended. Scoring...")
         onThinkingChange(true)
+        var scoreText: String? = null
         withContext(Dispatchers.IO) {
           val score = bridge.sendGtpCommand("final_score")
           if (score.startsWith("=")) {
-            finalScoreText = score.substring(1).trim()
-            onStatusTextChange("Game Over")
-            // Fetch final analysis for territory display
-            analysis = getAnalysis(bridge, currentTurn)
+            scoreText = score.substring(1).trim()
           }
-          onThinkingChange(false)
         }
+        if (scoreText != null) {
+          finalScoreText = scoreText
+          onStatusTextChange("Game Over")
+          analysis = getAnalysis(bridge, currentTurn)
+          saveGameState(score = scoreText)
+        }
+        onThinkingChange(false)
       }
     }
 
@@ -350,24 +377,33 @@ class GameFragment : Fragment() {
           lastMoveText = "$colorStr (AI) played $aiMoveStr"
           
           // Update history
-          moveHistory = moveHistory.take(historyIndex + 1) + aiMoveStr
-          historyIndex++
+          val newHistory = moveHistory.take(historyIndex + 1) + aiMoveStr
+          val newIndex = historyIndex + 1
+          moveHistory = newHistory
+          historyIndex = newIndex
           consecutivePasses = 0
           
-          currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          val nextTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          currentTurn = nextTurn
           onStatusTextChange("Turn.")
+          saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, score = finalScoreText, passes = 0)
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
           android.widget.Toast.makeText(context, R.string.msg_ai_passed, android.widget.Toast.LENGTH_SHORT).show()
-          consecutivePasses++
-          currentTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          val newPasses = consecutivePasses + 1
+          consecutivePasses = newPasses
+          val nextTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
+          currentTurn = nextTurn
           onStatusTextChange("Turn.")
           scope.launch { checkGameEnd() }
+          saveGameState(turn = nextTurn, passes = newPasses)
         } else if (aiMoveStr.lowercase() == "resign") {
             val winner = if (color == Stone.BLACK) "White" else "Black"
             onStatusTextChange("AI Resigned. $winner wins!")
             lastMoveText = "AI Resigned."
-            finalScoreText = "$winner wins by resignation"
+            val scoreText = "$winner wins by resignation"
+            finalScoreText = scoreText
+            saveGameState(score = scoreText)
         } else {
           onStatusTextChange("AI error.")
         }
@@ -376,7 +412,8 @@ class GameFragment : Fragment() {
 
     suspend fun startNewGame(mode: GameMode, h: Int, m: String, v: Int) {
       onThinkingChange(true)
-      
+      isGameInProgress = true
+
       if (m != currentModelName) {
         onStatusTextChange("Re-initializing engine with $m...")
         bridge.shutdown()
@@ -394,7 +431,7 @@ class GameFragment : Fragment() {
       withContext(Dispatchers.IO) {
         bridge.sendGtpCommand("clear_board")
         bridge.sendGtpCommand("set_max_visits $v")
-        
+
         val komi = if (h > 0) 0.5 else 7.5
         bridge.sendGtpCommand("komi $komi")
 
@@ -402,9 +439,9 @@ class GameFragment : Fragment() {
           bridge.sendGtpCommand("fixed_handicap $h")
         }
       }
-      
+
       boardState = syncBoardState(bridge)
-      
+
       // If handicap stones were placed, they appear in moveHistory in the engine.
       // However, we want to reflect them in our UI's moveHistory too.
       val newMoveHistory = if (h > 0) {
@@ -434,15 +471,87 @@ class GameFragment : Fragment() {
       currentVisits = v
       aiAutoPlay = false
       onThinkingChange(false)
-      
+
       // KataGo sets turn to White after handicap
       currentTurn = if (h > 0) Stone.WHITE else Stone.BLACK
       onStatusTextChange("Turn.")
       lastMoveText = "No moves yet"
 
+      saveGameState(
+        history = newMoveHistory,
+        idx = newMoveHistory.size - 1,
+        turn = if (h > 0) Stone.WHITE else Stone.BLACK,
+        score = null,
+        passes = 0
+      )
+
       if (currentMode == GameMode.USER_WHITE || (currentMode == GameMode.AI_BOTH) || (h > 0 && currentMode == GameMode.USER_BLACK)) {
         handleAiMove(currentTurn)
       }
+    }
+
+    suspend fun restoreSavedGame(movesJsonStr: String, mode: GameMode, h: Int, v: Int, turnStr: String, scoreText: String?, passes: Int) {
+      onThinkingChange(true)
+      onStatusTextChange("Restoring saved game...")
+
+      val moves = try {
+        val arr = org.json.JSONArray(movesJsonStr)
+        val list = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+          list.add(arr.getString(i))
+        }
+        list
+      } catch (e: Exception) {
+        emptyList<String>()
+      }
+
+      withContext(Dispatchers.IO) {
+        bridge.sendGtpCommand("clear_board")
+        bridge.sendGtpCommand("set_max_visits $v")
+        val komi = if (h > 0) 0.5 else 7.5
+        bridge.sendGtpCommand("komi $komi")
+
+        if (h > 0) {
+          bridge.sendGtpCommand("fixed_handicap $h")
+        }
+
+        val startIndex = if (h > 0) h else 0
+        for (i in startIndex until moves.size) {
+          val moveStr = moves[i]
+          val color = if (h > 0) {
+            if ((i - h) % 2 == 0) "white" else "black"
+          } else {
+            if (i % 2 == 0) "black" else "white"
+          }
+          bridge.sendGtpCommand("play $color $moveStr")
+        }
+      }
+
+      boardState = syncBoardState(bridge)
+      previewMove = null
+      lastMove = if (moves.isNotEmpty()) {
+        val lastMoveStr = moves.last()
+        if (lastMoveStr.uppercase() != "PASS") fromGtpCoords(lastMoveStr) else null
+      } else null
+
+      moveHistory = moves
+      historyIndex = moves.size - 1
+      consecutivePasses = passes
+      finalScoreText = scoreText
+      analysis = AnalysisResult()
+      currentMode = mode
+      handicap = h
+      currentVisits = v
+      aiAutoPlay = false
+      currentTurn = try { Stone.valueOf(turnStr) } catch (e: Exception) { Stone.BLACK }
+
+      onThinkingChange(false)
+      onStatusTextChange("Turn.")
+      lastMoveText = if (moves.isNotEmpty()) {
+        val lastMoveStr = moves.last()
+        val turnColor = if ((moves.size - 1) % 2 == 0) "Black" else "White"
+        if (lastMoveStr.uppercase() == "PASS") "$turnColor passed." else "$turnColor played $lastMoveStr"
+      } else "No moves yet"
     }
 
     LaunchedEffect(isThinking, engineError) {
@@ -453,13 +562,30 @@ class GameFragment : Fragment() {
         if (result == 0) {
           onEngineInitializedChange(true)
           onStatusTextChange("Engine ready.")
-          showSettings = true
+          if (isGameInProgress) {
+            val savedMoves = sharedPrefs.getString("saved_moves", null)
+            if (savedMoves != null) {
+              val savedModeStr = sharedPrefs.getString("current_mode", GameMode.USER_BLACK.name) ?: GameMode.USER_BLACK.name
+              val savedMode = try { GameMode.valueOf(savedModeStr) } catch (e: Exception) { GameMode.USER_BLACK }
+              val savedHandicap = sharedPrefs.getInt("handicap", 0)
+              val savedVisits = sharedPrefs.getInt("current_visits", 500)
+              val savedTurn = sharedPrefs.getString("current_turn", Stone.BLACK.name) ?: Stone.BLACK.name
+              val savedScoreText = sharedPrefs.getString("final_score_text", null)
+              val savedPasses = sharedPrefs.getInt("consecutive_passes", 0)
+              restoreSavedGame(savedMoves, savedMode, savedHandicap, savedVisits, savedTurn, savedScoreText, savedPasses)
+            } else {
+              showSettings = true
+            }
+          } else {
+            showSettings = true
+          }
         } else {
           onStatusTextChange("Engine Init Failed: $result")
           onEngineErrorChange(result)
         }
       }
     }
+
 
     Scaffold(
       topBar = {
@@ -537,7 +663,7 @@ class GameFragment : Fragment() {
                           )
                       )
                     }
-                    
+
                     if (finalScoreText != null) {
                       if (isEngineInitialized) Spacer(Modifier.width(16.dp))
                       Text(
@@ -552,7 +678,7 @@ class GameFragment : Fragment() {
                       // Normalize analysis to Black's perspective for consistent display
                       val blackWinrate = if (currentTurn == Stone.BLACK) analysis.winrate else (1.0 - analysis.winrate)
                       val blackScoreLead = if (currentTurn == Stone.BLACK) analysis.scoreLead else -analysis.scoreLead
-                      
+
                       val winratePercent = (blackWinrate * 100).toInt()
                       val scoreLeadFormatted = String.format("%.1f", blackScoreLead)
                       val leadSign = if (blackScoreLead >= 0) "+" else ""
@@ -873,12 +999,15 @@ class GameFragment : Fragment() {
                     scope.launch {
                         val color = if (currentTurn == Stone.BLACK) "black" else "white"
                         bridge.sendGtpCommand("play $color pass")
-                        consecutivePasses++
+                        val newPasses = consecutivePasses + 1
+                        consecutivePasses = newPasses
                         val colorStr = if (currentTurn == Stone.BLACK) "Black" else "White"
                         lastMoveText = "$colorStr passed."
-                        currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                        val nextTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                        currentTurn = nextTurn
                         
                         checkGameEnd()
+                        saveGameState(turn = nextTurn, passes = newPasses)
  
                         if (finalScoreText == null) {
                             if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
@@ -915,13 +1044,19 @@ class GameFragment : Fragment() {
                           boardState = syncBoardState(bridge)
                           val colorStr = if (turnColor == Stone.BLACK) "Black" else "White"
                           lastMoveText = "$colorStr played $moveStr"
-                          moveHistory = moveHistory.take(historyIndex + 1) + moveStr
-                          historyIndex++
+                          val newHistory = moveHistory.take(historyIndex + 1) + moveStr
+                          val newIndex = historyIndex + 1
+                          moveHistory = newHistory
+                          historyIndex = newIndex
                           consecutivePasses = 0
                           previewMove = null
                           lastMove = x to y
                           playMoveSound()
-                          currentTurn = if (turnColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                          val nextTurn = if (turnColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                          currentTurn = nextTurn
+
+                          saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, score = finalScoreText, passes = 0)
+
                           if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
                             scope.launch { handleAiMove(Stone.WHITE) }
                           } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
@@ -962,12 +1097,15 @@ class GameFragment : Fragment() {
                   if (historyIndex >= 0) {
                     scope.launch {
                       bridge.sendGtpCommand("undo")
-                      historyIndex--
+                      val newIndex = historyIndex - 1
+                      historyIndex = newIndex
                       boardState = syncBoardState(bridge)
-                      currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
-                      lastMove = if (historyIndex >= 0) fromGtpCoords(moveHistory[historyIndex]) else null
-                      lastMoveText = if (historyIndex >= 0) "Undone. Last move: ${moveHistory[historyIndex]}" else "Undone to start"
+                      val nextTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                      currentTurn = nextTurn
+                      lastMove = if (newIndex >= 0) fromGtpCoords(moveHistory[newIndex]) else null
+                      lastMoveText = if (newIndex >= 0) "Undone. Last move: ${moveHistory[newIndex]}" else "Undone to start"
                       previewMove = null
+                      saveGameState(idx = newIndex, turn = nextTurn)
                     }
                   }
                 },
@@ -996,15 +1134,18 @@ class GameFragment : Fragment() {
                 onClick = {
                   if (historyIndex < moveHistory.size - 1) {
                     scope.launch {
-                      historyIndex++
-                      val moveStr = moveHistory[historyIndex]
+                      val newIndex = historyIndex + 1
+                      historyIndex = newIndex
+                      val moveStr = moveHistory[newIndex]
                       val color = if (currentTurn == Stone.BLACK) "black" else "white"
                       bridge.sendGtpCommand("play $color $moveStr")
                       boardState = syncBoardState(bridge)
                       lastMove = fromGtpCoords(moveStr)
                       lastMoveText = "Redone: $moveStr"
-                      currentTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                      val nextTurn = if (currentTurn == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                      currentTurn = nextTurn
                       previewMove = null
+                      saveGameState(idx = newIndex, turn = nextTurn)
                     }
                   }
                 },
