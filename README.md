@@ -232,4 +232,20 @@ Since the premium unlock is a non-consumable product, once purchased, it remains
 5.  Clear the cache/data of the Play Store app on the test device, or wait a few minutes for the purchase state to sync.
 6.  Reopen the app; the premium features should be locked again, allowing you to test the purchase flow once more.
 
+### 5. Bypassing Premium Lock for Local Builds
+
+For local development or testing AI strengths without configuring Google Play Console/license testing, you can bypass the in-app purchase lock by hardcoding the premium state:
+
+1. Open `src/java/com/cwave/weiqi/GameFragment.kt`.
+2. Locate the variable:
+   ```kotlin
+   val isPremiumUnlocked by billingManager.isPremiumUnlocked.collectAsState()
+   ```
+3. Change it to:
+   ```kotlin
+   val isPremiumUnlocked = true
+   ```
+This will instantly unlock the "Advanced" and "Pro" AI strengths and disable the IAP dialog flow in your local compiler build.
+
+
 
