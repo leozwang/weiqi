@@ -343,6 +343,17 @@ class GameFragment : Fragment() {
       }
     }
 
+    fun playPassSound() {
+      try {
+        val toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 85)
+        toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
+      } catch (e: Exception) {
+        soundId.value?.let { id ->
+          soundPool.play(id, 0.8f, 0.8f, 1, 0, 0.65f)
+        }
+      }
+    }
+
     suspend fun checkGameEnd() {
       if (consecutivePasses >= 2) {
         onStatusTextChange("Game ended. Scoring...")
@@ -390,6 +401,7 @@ class GameFragment : Fragment() {
         } else if (aiMoveStr == "PASS") {
           lastMoveText = "AI passed."
           android.widget.Toast.makeText(context, R.string.msg_ai_passed, android.widget.Toast.LENGTH_SHORT).show()
+          playPassSound()
           val newPasses = consecutivePasses + 1
           consecutivePasses = newPasses
           val nextTurn = if (color == Stone.BLACK) Stone.WHITE else Stone.BLACK
@@ -670,6 +682,16 @@ class GameFragment : Fragment() {
                         text = "Game Over",
                         style = MaterialTheme.typography.h4,
                         fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colors.onSurface
+                      )
+                    }
+
+                    if (!showAnalysis && finalScoreText == null && isEngineInitialized) {
+                      Spacer(Modifier.width(16.dp))
+                      Text(
+                        text = lastMoveText,
+                        style = MaterialTheme.typography.subtitle1,
+                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colors.onSurface
                       )
                     }
@@ -999,6 +1021,7 @@ class GameFragment : Fragment() {
                     scope.launch {
                         val color = if (currentTurn == Stone.BLACK) "black" else "white"
                         bridge.sendGtpCommand("play $color pass")
+                        playPassSound()
                         val newPasses = consecutivePasses + 1
                         consecutivePasses = newPasses
                         val colorStr = if (currentTurn == Stone.BLACK) "Black" else "White"
