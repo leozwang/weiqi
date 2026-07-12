@@ -424,25 +424,24 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         // Use computeLead even if game is finished to account for dead stones and unfilled dame.
         // It provides a much more human-expected "judged" score.
         BoardHistory histCopy = rootHist;
-        // In KataGo, PlayUtils::computeLead(..., P_WHITE, ...) returns (oldKomi - result)
-        // This is lead from BLACK's perspective (Black points - White points).
+        // In KataGo, PlayUtils::computeLead(...) returns lead from WHITE's perspective (White points - Black points).
         float score = PlayUtils::computeLead(
             bot->getSearchStopAndWait(),
             NULL,
             bot->getRootBoard(),
             histCopy,
-            P_WHITE, 
+            bot->getRootPla(),
             500,     // 500 visits for a reliable estimate
             OtherGameProperties()
         );
         
-        LOGI("Final score lead (B-W): %.1f", score);
-        Player winner = score > 0 ? P_BLACK : (score < 0 ? P_WHITE : C_EMPTY);
+        LOGI("Final score lead (W-B): %.1f", score);
+        Player winner = score > 0 ? P_WHITE : (score < 0 ? P_BLACK : C_EMPTY);
 
         std::string resp = "= ";
         if (winner == C_EMPTY) resp += "0";
-        else if (winner == P_BLACK) resp += "B+" + Global::strprintf("%.1f", score);
-        else if (winner == P_WHITE) resp += "W+" + Global::strprintf("%.1f", -score);
+        else if (winner == P_WHITE) resp += "W+" + Global::strprintf("%.1f", score);
+        else if (winner == P_BLACK) resp += "B+" + Global::strprintf("%.1f", -score);
         return env->NewStringUTF(resp.c_str());
     }
 

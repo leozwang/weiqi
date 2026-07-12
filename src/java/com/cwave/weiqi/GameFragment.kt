@@ -697,9 +697,8 @@ class GameFragment : Fragment() {
                     }
 
                     if (showAnalysis && finalScoreText == null) {
-                      // Normalize analysis to Black's perspective for consistent display
-                      val blackWinrate = if (currentTurn == Stone.BLACK) analysis.winrate else (1.0 - analysis.winrate)
-                      val blackScoreLead = if (currentTurn == Stone.BLACK) analysis.scoreLead else -analysis.scoreLead
+                      val blackWinrate = analysis.winrate
+                      val blackScoreLead = analysis.scoreLead
 
                       val winratePercent = (blackWinrate * 100).toInt()
                       val scoreLeadFormatted = String.format("%.1f", blackScoreLead)
