@@ -86,9 +86,10 @@ class BillingManager(
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { billingResult, detailsList ->
+        billingClient.queryProductDetailsAsync(params) { billingResult, result ->
             if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                _productDetails.value = detailsList.find { it.productId == PREMIUM_UNLOCK_ID }
+                val detailsList = result.productDetailsList
+                _productDetails.value = detailsList?.find { it.productId == PREMIUM_UNLOCK_ID }
             } else {
                 Log.e(TAG, "Failed querying product details: ${billingResult.debugMessage}")
             }
