@@ -545,3 +545,25 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_cwave_weiqi_katago_KataGoBridgeEigen_shutdown(JNIEnv* env, jobject thiz) {
     Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(env, thiz);
 }
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeTPU_init(JNIEnv *env, jobject thiz, jstring config_path, jstring model_path) {
+    LOGI("KataGoBridgeTPU::init called - initializing engine for Pixel 9 Tensor G4 TPU");
+    return Java_com_cwave_weiqi_katago_KataGoBridge_init(env, thiz, config_path, model_path);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeTPU_sendGtpCommand(JNIEnv* env, jobject thiz, jstring command) {
+    return Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(env, thiz, command);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeTPU_getBoardState(JNIEnv* env, jobject thiz) {
+    return Java_com_cwave_weiqi_katago_KataGoBridge_getBoardState(env, thiz);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_cwave_weiqi_katago_KataGoBridgeTPU_shutdown(JNIEnv* env, jobject thiz) {
+    Java_com_cwave_weiqi_katago_KataGoBridge_shutdown(env, thiz);
+}
+

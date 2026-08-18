@@ -57,10 +57,88 @@ Download more models at https://katagotraining.org from Archives https://katagoa
 
 The Android application is optimized for high performance using the following techniques:
 
-1.  **OpenCL Backend:** The engine is built with the **OpenCL** backend, allowing it to run neural network evaluations on the device's GPU (Adreno, Mali, or PowerVR).
-2.  **OpenCL Proxy:** Implemented a custom C++ proxy to bypass Android's vendor library namespace restrictions, enabling secure access to the system `libOpenCL.so`.
-3.  **Automatic Tuning:** The first time the engine initializes, it performs autotuning to compile the most efficient GPU kernels for your specific hardware.
-4.  **Multi-threading:** Configured to use 4 search threads (`numSearchThreads = 4`) to maximize GPU utilization without causing thermal throttling.
+1.  **Google Pixel 11 TPU (Tensor G6 / SantaFe):** Next-gen NPU acceleration on Pixel 11 devices (Cubs, Grizzly, Kodiak, Yogi) via LiteRT, delivering sub-second AI moves with peak power efficiency (see [Pixel 11 TPU Guide](file:///tmp/weiqi/doc/pixel11_tpu_implementation.md)).
+2.  **Google Pixel 9 TPU (Tensor G4):** Direct NPU acceleration on Pixel 9 devices via LiteRT and the Google Tensor hardware dispatcher (see [Pixel 9 TPU Guide](file:///tmp/weiqi/doc/pixel9_tpu_implementation.md)).
+3.  **OpenCL Backend:** Built with the **OpenCL** GPU backend for devices with Mali, Adreno, or PowerVR GPUs.
+4.  **OpenCL Proxy:** Implemented a custom C++ proxy to bypass Android's vendor library namespace restrictions, enabling secure access to the system `libOpenCL.so`.
+5.  **Automatic Tuning:** The first time the engine initializes, it performs autotuning to compile the most efficient GPU kernels for your specific hardware.
+6.  **Multi-threading:** Configured to use 4 search threads (`numSearchThreads = 4`) to maximize hardware utilization without causing thermal throttling.
+
+#### How to Switch Between TPU and GPU (In-App)
+
+On Google Pixel 9 (Tensor G4) and Pixel 11 (Tensor G6) phones, the app supports dynamic hardware acceleration on either the **Edge TPU (NPU)** or the **ARM Mali/Immortalis GPU (OpenCL)**:
+
+1. Tap **NEW GAME** in the app.
+2. In the dialog, find the **HARDWARE ACCELERATION** section and choose:
+   * **Auto (Recommended):** Automatically selects Edge TPU on Pixel devices and OpenCL GPU on other Android devices.
+   * **TPU (Google Tensor NPU):** Forces execution on Google's Edge TPU via LiteRT (`model_tpu_p11.tflite` / `model_tpu_p9.tflite`).
+   * **GPU (OpenCL):** Forces graphics acceleration on the device GPU via OpenCL (`model.bin.gz`).
+   * **CPU (Eigen):** Forces multi-threaded CPU processing fallback (`model.bin.gz`).
+3. Tap **START**: The engine will reinitialize on the chosen backend, update the top bar badge (e.g. `[TPU (Pixel 11)]` or `[GPU (Pixel 11 OpenCL)]`), and load the corresponding model file.
+
+#### Benchmarking & Latency Diagnostics
+
+To measure and compare real-time inference latency between TPU and GPU:
+1. In the **New Game** dialog, scroll down to **DIAGNOSTICS & HARDWARE**.
+2. Toggle **Show Engine Latency** to **ON**.
+3. Real-time inference latency (in seconds) will appear in the top action bar (e.g. `TPU (Pixel 11) • 3.45s`), in AI move notifications (e.g. `White (AI) played D4 (3.45s)`), and in the position analysis bar.
+
+#### Understanding AI Move Latency & MCTS Search Visits
+
+KataGo uses Monte Carlo Tree Search (MCTS) to evaluate moves. Rather than evaluating the neural network once per turn, KataGo evaluates the network dozens to hundreds of times depending on the selected **AI Strength (Visits)**:
+
+$$\text{Total Turn Latency} \approx \text{MCTS Visits} \times \text{Per-Evaluation Latency}$$
+
+On mobile hardware (Pixel 9 / Pixel 11):
+* **Single Evaluation Latency:** Evaluating a single board state through the 10-block neural network takes approximately **~30ms – 40ms** (including tensor marshalling, delegate invocation, and tree synchronization).
+* **Easy (100 visits):** $100 \times 35\text{ms} \approx \mathbf{3.5\text{ seconds}}$ per move.
+* **Amateur (500 visits, default):** $500 \times 35\text{ms} \approx \mathbf{15\text{ – }20\text{ seconds}}$ per move.
+* **Advanced (1000 visits):** $1000 \times 35\text{ms} \approx \mathbf{30\text{ – }40\text{ seconds}}$ per move.
+* **Pro (2500 visits):** $2500 \times 35\text{ms} \approx \mathbf{1.5\text{ – }2\text{ minutes}}$ per move.
+
+**Tips for Fast Play:**
+* For rapid casual games, select **Easy (100 visits)** in the **New Game** settings dialog (~3–4 seconds per turn).
+* Enable **Show Engine Latency** in the diagnostics section to monitor exact second timings on your device.
+
+#### Verifying TPU Execution (Logcat & Android Framework)
+
+To verify that the engine is executing directly on the Google Edge TPU:
+
+##### 1. Application & Backend Telemetry (Logcat)
+Run the following command while launching the app or starting a game:
+```bash
+adb logcat -v time -s KataGoBackend:I KataGoEngine:I KataGoBridgeTPU:I GameFragment:I
+```
+**Expected Output:**
+```text
+I/GameFragment: Pixel 11 (Tensor G6 / SantaFe TPU) detected. Initializing KataGoBridgeTPU.
+I/KataGoBackend: =============================================
+I/KataGoBackend: VERIFIED RUNTIME BACKEND: TPU_PIXEL_11 (Tensor G6 SantaFe)
+I/KataGoBackend: ACTIVE BRIDGE CLASS: KataGoBridgeTPU
+I/KataGoBackend: LOADED MODEL FILE: model_tpu_p11.tflite
+I/KataGoBackend: INITIALIZATION STATUS: SUCCESS
+I/KataGoBackend: =============================================
+```
+
+##### 2. Google Tensor TPU System & Driver Logs
+To monitor low-level driver initialization and TPU hardware dispatch:
+```bash
+adb logcat -v time | grep -iE "darwinn|edgetpu|ltert|tflite|google_tensor"
+```
+
+##### 3. Process Memory & Device Node Verification
+Verify mapped native libraries and hardware device nodes in terminal:
+```bash
+# Check loaded TPU libraries in the app process
+adb shell "cat /proc/\$(pidof com.cwave.weiqi)/maps" | grep -E "libkatago_tpu_jni|LiteRt|darwinn|edgetpu"
+
+# Check TPU hardware device nodes
+adb shell ls -l /dev/edgetpu* /dev/accel* /dev/darwinn*
+```
+
+
+
+
 
 #### Compiling KataGo for Android (Bazel)
 

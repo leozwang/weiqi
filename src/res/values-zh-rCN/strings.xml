@@ -2,16 +2,32 @@
 <resources>
     <string name="app_name">围棋 Weiqi Go</string>
     <string name="tuning_gpu">围棋 碁 GO!\n\n正在调优 GPU...\n初次设定需 1-2 分钟</string>
+    <string name="tuning_tpu">围棋 碁 GO!\n\n正在调优 TPU...\n初次设定</string>
     <string name="initializing_engine">围棋 碁 GO!\n正在初始化引擎...</string>
+    <string name="section_diagnostics">诊断与硬件信息</string>
+    <string name="setting_show_latency">显示引擎推理延迟</string>
+    <string name="setting_show_latency_desc">实时显示每个 KataGo 引擎调用的耗时 (秒)</string>
     
     <!-- Main game UI strings -->
-    <string name="btn_pass">弃子</string>
+    <string name="btn_pass">停一手</string>
     <string name="btn_place">落子</string>
     <string name="btn_new_game">新对局</string>
-    <string name="btn_analysis">形势研判</string>
+    <string name="btn_analysis">形势判断</string>
+    <string name="btn_auto">自动对弈</string>
+    <string name="btn_pause">暂停</string>
+    <string name="btn_step">单步执行</string>
     
     <!-- New game configuration strings -->
     <string name="title_new_game">新建对局</string>
+    <string name="section_hardware_backend">硬件加速模式</string>
+    <string name="backend_auto_title">自动选择 (推荐)</string>
+    <string name="backend_auto_desc">自动匹配当前设备最快加速单元</string>
+    <string name="backend_tpu_title">TPU (Google Tensor NPU)</string>
+    <string name="backend_tpu_desc">Pixel 专属 Edge TPU 亚秒级极速计算</string>
+    <string name="backend_gpu_title">GPU (OpenCL)</string>
+    <string name="backend_gpu_desc">Mali / Adreno 图形处理器硬件加速</string>
+    <string name="backend_cpu_title">CPU (Eigen)</string>
+    <string name="backend_cpu_desc">多线程通用处理器兼容模式</string>
     <string name="section_ai_engine">AI 引擎</string>
     <string name="section_handicap">让子数</string>
     <string name="section_ai_strength">难度</string>

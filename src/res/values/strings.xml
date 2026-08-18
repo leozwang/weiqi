@@ -2,16 +2,33 @@
 <resources>
     <string name="app_name">Weiqi Go</string>
     <string name="tuning_gpu">围棋 碁 GO!\n\nTuning GPU...\nOne-time setup, 1-2 mins</string>
+    <string name="tuning_tpu">围棋 碁 GO!\n\nTuning TPU...\nOne-time setup</string>
     <string name="initializing_engine">围棋 碁 GO!\nInitializing engine...</string>
+    <string name="section_diagnostics">DIAGNOSTICS &amp; HARDWARE</string>
+    <string name="setting_show_latency">Show Engine Latency</string>
+    <string name="setting_show_latency_desc">Display inference latency (seconds) for KataGo engine calls</string>
     
     <!-- Main game UI strings -->
     <string name="btn_pass">PASS</string>
     <string name="btn_place">PLACE</string>
     <string name="btn_new_game">NEW GAME</string>
     <string name="btn_analysis">ANALYSIS</string>
+    <string name="btn_auto">AUTO</string>
+    <string name="btn_pause">PAUSE</string>
+    <string name="btn_step">STEP</string>
+
     
     <!-- New game configuration strings -->
     <string name="title_new_game">New Game</string>
+    <string name="section_hardware_backend">HARDWARE ACCELERATION</string>
+    <string name="backend_auto_title">Auto (Recommended)</string>
+    <string name="backend_auto_desc">Automatically picks fastest accelerator</string>
+    <string name="backend_tpu_title">TPU (Google Tensor NPU)</string>
+    <string name="backend_tpu_desc">Sub-second inference on Pixel Edge TPU</string>
+    <string name="backend_gpu_title">GPU (OpenCL)</string>
+    <string name="backend_gpu_desc">Graphics acceleration on Mali / Adreno</string>
+    <string name="backend_cpu_title">CPU (Eigen)</string>
+    <string name="backend_cpu_desc">Multi-threaded CPU fallback</string>
     <string name="section_ai_engine">AI ENGINE</string>
     <string name="section_handicap">HANDICAP</string>
     <string name="section_ai_strength">AI STRENGTH</string>

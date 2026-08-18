@@ -99,6 +99,7 @@ android_binary(
          ":lib",
          "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
          "//src/java/com/cwave/weiqi/katago:libkatago_eigen_jni.so",
+         "//src/java/com/cwave/weiqi/katago:libkatago_tpu_jni.so",
     ],
 )
 

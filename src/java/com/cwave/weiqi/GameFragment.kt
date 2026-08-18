@@ -52,6 +52,7 @@ import androidx.fragment.app.Fragment
 import com.cwave.weiqi.katago.IKataGoBridge
 import com.cwave.weiqi.katago.KataGoBridge
 import com.cwave.weiqi.katago.KataGoBridgeEigen
+import com.cwave.weiqi.katago.KataGoBridgeTPU
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -66,9 +67,51 @@ class GameFragment : Fragment() {
   private val boardSize = 19
   private lateinit var billingManager: BillingManager
 
+  enum class EngineBackend { AUTO, TPU, GPU, CPU }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     billingManager = BillingManager(requireContext(), lifecycleScope)
+    val prefs = requireContext().getSharedPreferences("weiqi_settings", android.content.Context.MODE_PRIVATE)
+    val savedBackendStr = prefs.getString("selected_backend", EngineBackend.AUTO.name) ?: EngineBackend.AUTO.name
+    val initialBackend = try { EngineBackend.valueOf(savedBackendStr) } catch (e: Exception) { EngineBackend.AUTO }
+    bridge = createEngineBridge(initialBackend)
+  }
+
+  private fun createEngineBridge(backendPreference: EngineBackend = EngineBackend.AUTO): IKataGoBridge {
+    return when (backendPreference) {
+      EngineBackend.TPU -> {
+        if (KataGoBridgeTPU.isSupported()) {
+          Log.i("GameFragment", "Explicit TPU backend requested. Initializing KataGoBridgeTPU.")
+          KataGoBridgeTPU()
+        } else {
+          Log.w("GameFragment", "TPU backend not available, falling back to OpenCL GPU.")
+          KataGoBridge()
+        }
+      }
+      EngineBackend.GPU -> {
+        Log.i("GameFragment", "Explicit GPU (OpenCL) backend requested. Initializing KataGoBridge.")
+        KataGoBridge()
+      }
+      EngineBackend.CPU -> {
+        Log.i("GameFragment", "Explicit CPU (Eigen) backend requested. Initializing KataGoBridgeEigen.")
+        KataGoBridgeEigen()
+      }
+      EngineBackend.AUTO -> {
+        if (WeiqiApplication.isPixelTpuSupported() && KataGoBridgeTPU.isSupported()) {
+          val chipName = when {
+            WeiqiApplication.isPixel11Family() -> "Pixel 11 (Tensor G6 / SantaFe TPU)"
+            WeiqiApplication.isPixel9Family() -> "Pixel 9 (Tensor G4 / Zuma TPU)"
+            else -> "Pixel Tensor TPU"
+          }
+          Log.i("GameFragment", "Auto backend: $chipName detected. Initializing KataGoBridgeTPU.")
+          KataGoBridgeTPU()
+        } else {
+          Log.i("GameFragment", "Auto backend: Initializing KataGoBridge (OpenCL GPU).")
+          KataGoBridge()
+        }
+      }
+    }
   }
 
   enum class Stone { EMPTY, BLACK, WHITE }
@@ -107,14 +150,22 @@ class GameFragment : Fragment() {
           var isThinking by remember { mutableStateOf(true) }
           var engineError by remember { mutableStateOf<Int?>(null) }
           val context = androidx.compose.ui.platform.LocalContext.current
-          var statusText by remember { mutableStateOf(context.getString(R.string.initializing_engine)) }
+          val initialTuningText = when {
+            bridge is KataGoBridgeTPU -> context.getString(R.string.tuning_tpu)
+            bridge is KataGoBridge -> context.getString(R.string.tuning_gpu)
+            else -> context.getString(R.string.initializing_engine)
+          }
+          var activeBridge by remember { mutableStateOf(bridge) }
+          var statusText by remember { mutableStateOf(initialTuningText) }
+
 
           Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colors.background
           ) {
             GameScreen(
-              bridge = bridge,
+              bridge = activeBridge,
+              onBridgeChange = { activeBridge = it },
               billingManager = billingManager,
               isEngineInitialized = isEngineInitialized,
               onEngineInitializedChange = { isEngineInitialized = it },
@@ -220,6 +271,7 @@ class GameFragment : Fragment() {
   @Composable
   fun GameScreen(
     bridge: IKataGoBridge,
+    onBridgeChange: (IKataGoBridge) -> Unit,
     billingManager: BillingManager,
     isEngineInitialized: Boolean,
     onEngineInitializedChange: (Boolean) -> Unit,
@@ -243,6 +295,46 @@ class GameFragment : Fragment() {
     val initialModeName = remember { sharedPrefs.getString("current_mode", GameMode.USER_BLACK.name) ?: GameMode.USER_BLACK.name }
     val initialMode = remember(initialModeName) {
       try { GameMode.valueOf(initialModeName) } catch (e: Exception) { GameMode.USER_BLACK }
+    }
+
+    val initialBackendName = remember { sharedPrefs.getString("selected_backend", EngineBackend.AUTO.name) ?: EngineBackend.AUTO.name }
+    val initialBackend = remember(initialBackendName) {
+      try { EngineBackend.valueOf(initialBackendName) } catch (e: Exception) { EngineBackend.AUTO }
+    }
+    var currentBackend by remember { mutableStateOf(initialBackend) }
+
+    val initialShowLatency = remember { sharedPrefs.getBoolean("show_engine_latency", false) }
+    var showEngineLatency by remember { mutableStateOf(initialShowLatency) }
+    var lastEngineLatencyMs by remember { mutableStateOf<Long?>(null) }
+
+    val backendBadgeText = when (bridge) {
+      is KataGoBridgeTPU -> {
+        if (WeiqiApplication.isPixel11Family()) "TPU (Pixel 11)"
+        else if (WeiqiApplication.isPixel9Family()) "TPU (Pixel 9)"
+        else "TPU (Tensor)"
+      }
+      is KataGoBridge -> {
+        if (WeiqiApplication.isPixel11Family()) "GPU (Pixel 11 OpenCL)"
+        else if (WeiqiApplication.isPixel9Family()) "GPU (Pixel 9 OpenCL)"
+        else "GPU (OpenCL)"
+      }
+      is KataGoBridgeEigen -> "CPU (Eigen)"
+      else -> "KataGo"
+    }
+
+    val backendDetailText = when (bridge) {
+      is KataGoBridgeTPU -> {
+        if (WeiqiApplication.isPixel11Family()) "Google Tensor G6 (SantaFe TPU) via LiteRT"
+        else if (WeiqiApplication.isPixel9Family()) "Google Tensor G4 (Zuma TPU) via LiteRT"
+        else "Google Tensor TPU via LiteRT"
+      }
+      is KataGoBridge -> {
+        if (WeiqiApplication.isPixel11Family()) "Pixel 11 ARM Immortalis/Mali GPU (OpenCL)"
+        else if (WeiqiApplication.isPixel9Family()) "Pixel 9 ARM Mali-G715 GPU (OpenCL)"
+        else "OpenCL Mobile GPU (Mali/Adreno)"
+      }
+      is KataGoBridgeEigen -> "CPU Eigen Multi-threaded Fallback"
+      else -> "KataGo Engine"
     }
 
     var lastMoveText by remember { mutableStateOf("No moves yet") }
@@ -269,7 +361,8 @@ class GameFragment : Fragment() {
       idx: Int = historyIndex,
       turn: Stone = currentTurn,
       score: String? = finalScoreText,
-      passes: Int = consecutivePasses
+      passes: Int = consecutivePasses,
+      backend: EngineBackend = currentBackend
     ) {
       val movesJson = org.json.JSONArray(history.take(idx + 1)).toString()
       sharedPrefs.edit()
@@ -282,6 +375,7 @@ class GameFragment : Fragment() {
         .putInt("handicap", handicap)
         .putString("current_model_name", currentModelName)
         .putInt("current_visits", currentVisits)
+        .putString("selected_backend", backend.name)
         .apply()
     }
 
@@ -298,18 +392,22 @@ class GameFragment : Fragment() {
         if (isHumanTurn && !isThinking) {
             val colorStr = if (currentTurn == Stone.WHITE) "white" else "black"
             withContext(Dispatchers.IO) {
-                // We use a local busy check if needed, but since we are in a LaunchedEffect 
-                // keyed by currentTurn, it won't run multiple times for the same turn.
                 onStatusTextChange("Analyzing position...")
-                // Use a fraction of currentVisits for analysis to keep it fast
                 val analysisVisits = (currentVisits * 0.4).toInt().coerceIn(100, 1000)
+                val startTime = System.currentTimeMillis()
                 bridge.sendGtpCommand("think $colorStr $analysisVisits")
+                val elapsed = System.currentTimeMillis() - startTime
+                lastEngineLatencyMs = elapsed
+                Log.i("KataGoLatency", "[$backendBadgeText] think $colorStr completed in ${elapsed}ms")
                 onStatusTextChange("Turn.")
             }
         }
         
         if (!isThinking) {
+            val startTime = System.currentTimeMillis()
             analysis = getAnalysis(bridge, currentTurn)
+            val elapsed = System.currentTimeMillis() - startTime
+            lastEngineLatencyMs = elapsed
         }
       }
     }
@@ -376,16 +474,20 @@ class GameFragment : Fragment() {
     }
 
     suspend fun handleAiMove(color: Stone) {
+      if (finalScoreText != null) return
       onThinkingChange(true)
-      onStatusTextChange("AI is thinking...")
-      genAiMove(color, bridge) { aiX, aiY, aiMoveStr ->
+      val turnName = if (color == Stone.BLACK) "Black" else "White"
+      onStatusTextChange("AI ($turnName) is thinking...")
+      genAiMove(color, bridge) { aiX, aiY, aiMoveStr, elapsedMs ->
         onThinkingChange(false)
+        lastEngineLatencyMs = elapsedMs
         boardState = syncBoardState(bridge)
         if (aiX != -1 && aiY != -1) {
           lastMove = aiX to aiY
           playMoveSound()
           val colorStr = if (color == Stone.BLACK) "Black" else "White"
-          lastMoveText = "$colorStr (AI) played $aiMoveStr"
+          val latencySuffix = if (showEngineLatency) " (${formatLatency(elapsedMs)})" else ""
+          lastMoveText = "$colorStr (AI) played $aiMoveStr$latencySuffix"
           
           // Update history
           val newHistory = moveHistory.take(historyIndex + 1) + aiMoveStr
@@ -398,8 +500,19 @@ class GameFragment : Fragment() {
           currentTurn = nextTurn
           onStatusTextChange("Turn.")
           saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, score = finalScoreText, passes = 0)
+
+          if (currentMode == GameMode.AI_BOTH && aiAutoPlay && finalScoreText == null) {
+            scope.launch {
+              kotlinx.coroutines.delay(600)
+              if (currentMode == GameMode.AI_BOTH && aiAutoPlay && finalScoreText == null) {
+                handleAiMove(nextTurn)
+              }
+            }
+          }
         } else if (aiMoveStr == "PASS") {
-          lastMoveText = "AI passed."
+          val latencySuffix = if (showEngineLatency) " (${formatLatency(elapsedMs)})" else ""
+          val colorStr = if (color == Stone.BLACK) "Black" else "White"
+          lastMoveText = "$colorStr (AI) passed.$latencySuffix"
           android.widget.Toast.makeText(context, R.string.msg_ai_passed, android.widget.Toast.LENGTH_SHORT).show()
           playPassSound()
           val newPasses = consecutivePasses + 1
@@ -409,7 +522,19 @@ class GameFragment : Fragment() {
           onStatusTextChange("Turn.")
           scope.launch { checkGameEnd() }
           saveGameState(turn = nextTurn, passes = newPasses)
+
+          if (newPasses < 2 && currentMode == GameMode.AI_BOTH && aiAutoPlay && finalScoreText == null) {
+            scope.launch {
+              kotlinx.coroutines.delay(600)
+              if (currentMode == GameMode.AI_BOTH && aiAutoPlay && finalScoreText == null) {
+                handleAiMove(nextTurn)
+              }
+            }
+          } else if (newPasses >= 2) {
+            aiAutoPlay = false
+          }
         } else if (aiMoveStr.lowercase() == "resign") {
+            aiAutoPlay = false
             val winner = if (color == Stone.BLACK) "White" else "Black"
             onStatusTextChange("AI Resigned. $winner wins!")
             lastMoveText = "AI Resigned."
@@ -417,18 +542,38 @@ class GameFragment : Fragment() {
             finalScoreText = scoreText
             saveGameState(score = scoreText)
         } else {
+          aiAutoPlay = false
           onStatusTextChange("AI error.")
         }
       }
     }
 
-    suspend fun startNewGame(mode: GameMode, h: Int, m: String, v: Int) {
+
+
+    suspend fun startNewGame(mode: GameMode, h: Int, m: String, v: Int, backend: EngineBackend = currentBackend) {
       onThinkingChange(true)
       isGameInProgress = true
 
-      if (m != currentModelName) {
-        onStatusTextChange("Re-initializing engine with $m...")
-        bridge.shutdown()
+      val targetBridgeClass = when (backend) {
+        EngineBackend.TPU -> KataGoBridgeTPU::class.java
+        EngineBackend.GPU -> KataGoBridge::class.java
+        EngineBackend.CPU -> KataGoBridgeEigen::class.java
+        EngineBackend.AUTO -> if (WeiqiApplication.isPixelTpuSupported() && KataGoBridgeTPU.isSupported()) KataGoBridgeTPU::class.java else KataGoBridge::class.java
+      }
+
+      val needsReinit = bridge.javaClass != targetBridgeClass || m != currentModelName
+      if (needsReinit) {
+        val label = when (backend) {
+          EngineBackend.TPU -> "TPU"
+          EngineBackend.GPU -> "GPU (OpenCL)"
+          EngineBackend.CPU -> "CPU (Eigen)"
+          EngineBackend.AUTO -> "Auto"
+        }
+        onStatusTextChange("Re-initializing engine on $label...")
+        try { bridge.shutdown() } catch (e: Exception) { Log.e("GameFragment", "Failed to shutdown previous bridge", e) }
+        val newBridge = createEngineBridge(backend)
+        this@GameFragment.bridge = newBridge
+        onBridgeChange(newBridge)
         val res = initEngine(m)
         if (res != 0) {
           onStatusTextChange("Engine Init Failed: $res")
@@ -437,6 +582,7 @@ class GameFragment : Fragment() {
           return
         }
         currentModelName = m
+        currentBackend = backend
       }
 
       onStatusTextChange("Starting new game...")
@@ -481,7 +627,7 @@ class GameFragment : Fragment() {
       currentMode = mode
       handicap = h
       currentVisits = v
-      aiAutoPlay = false
+      aiAutoPlay = (mode == GameMode.AI_BOTH)
       onThinkingChange(false)
 
       // KataGo sets turn to White after handicap
@@ -494,7 +640,8 @@ class GameFragment : Fragment() {
         idx = newMoveHistory.size - 1,
         turn = if (h > 0) Stone.WHITE else Stone.BLACK,
         score = null,
-        passes = 0
+        passes = 0,
+        backend = backend
       )
 
       if (currentMode == GameMode.USER_WHITE || (currentMode == GameMode.AI_BOTH) || (h > 0 && currentMode == GameMode.USER_BLACK)) {
@@ -502,7 +649,17 @@ class GameFragment : Fragment() {
       }
     }
 
-    suspend fun restoreSavedGame(movesJsonStr: String, mode: GameMode, h: Int, v: Int, turnStr: String, scoreText: String?, passes: Int) {
+
+    suspend fun restoreSavedGame(
+      movesJsonStr: String,
+      mode: GameMode,
+      h: Int,
+      v: Int,
+      turnStr: String,
+      scoreText: String?,
+      passes: Int,
+      backend: EngineBackend = currentBackend
+    ) {
       onThinkingChange(true)
       onStatusTextChange("Restoring saved game...")
 
@@ -555,6 +712,7 @@ class GameFragment : Fragment() {
       handicap = h
       currentVisits = v
       aiAutoPlay = false
+      currentBackend = backend
       currentTurn = try { Stone.valueOf(turnStr) } catch (e: Exception) { Stone.BLACK }
 
       onThinkingChange(false)
@@ -568,7 +726,13 @@ class GameFragment : Fragment() {
 
     LaunchedEffect(isThinking, engineError) {
       if (isThinking && !isEngineInitialized && engineError == null) {
-        onStatusTextChange(requireContext().getString(R.string.tuning_gpu))
+        val tuningMsg = when {
+          bridge is KataGoBridgeTPU -> requireContext().getString(R.string.tuning_tpu)
+          bridge is KataGoBridge -> requireContext().getString(R.string.tuning_gpu)
+          else -> requireContext().getString(R.string.initializing_engine)
+        }
+        onStatusTextChange(tuningMsg)
+
         val result = initEngine(currentModelName)
         onThinkingChange(false)
         if (result == 0) {
@@ -584,7 +748,9 @@ class GameFragment : Fragment() {
               val savedTurn = sharedPrefs.getString("current_turn", Stone.BLACK.name) ?: Stone.BLACK.name
               val savedScoreText = sharedPrefs.getString("final_score_text", null)
               val savedPasses = sharedPrefs.getInt("consecutive_passes", 0)
-              restoreSavedGame(savedMoves, savedMode, savedHandicap, savedVisits, savedTurn, savedScoreText, savedPasses)
+              val savedBackendStr = sharedPrefs.getString("selected_backend", EngineBackend.AUTO.name) ?: EngineBackend.AUTO.name
+              val savedBackend = try { EngineBackend.valueOf(savedBackendStr) } catch (e: Exception) { EngineBackend.AUTO }
+              restoreSavedGame(savedMoves, savedMode, savedHandicap, savedVisits, savedTurn, savedScoreText, savedPasses, savedBackend)
             } else {
               showSettings = true
             }
@@ -602,7 +768,33 @@ class GameFragment : Fragment() {
     Scaffold(
       topBar = {
         TopAppBar(
-          title = { Text("围棋 碁 GO!") },
+          title = {
+            Column {
+              Text(
+                text = "围棋 碁 GO!",
+                style = MaterialTheme.typography.h6
+              )
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+              ) {
+                Text(
+                  text = backendBadgeText,
+                  style = MaterialTheme.typography.caption,
+                  color = MaterialTheme.colors.onPrimary.copy(alpha = 0.85f),
+                  fontWeight = FontWeight.Bold
+                )
+                if (showEngineLatency && lastEngineLatencyMs != null) {
+                  Text(
+                    text = "• ${formatLatency(lastEngineLatencyMs)}",
+                    style = MaterialTheme.typography.caption,
+                    color = MaterialTheme.colors.secondary,
+                    fontWeight = FontWeight.ExtraBold
+                  )
+                }
+              }
+            }
+          },
           backgroundColor = MaterialTheme.colors.primary,
           contentColor = MaterialTheme.colors.onPrimary,
           elevation = 4.dp,
@@ -708,8 +900,9 @@ class GameFragment : Fragment() {
                       Divider(modifier = Modifier.height(20.dp).width(1.dp), color = Color.Gray.copy(alpha = 0.5f))
                       Spacer(Modifier.width(12.dp))
 
+                      val latencyText = if (showEngineLatency && lastEngineLatencyMs != null) " (${formatLatency(lastEngineLatencyMs)})" else ""
                       Text(
-                        text = "Black $winratePercent% $leadSign$scoreLeadFormatted Pts",
+                        text = "Black $winratePercent% $leadSign$scoreLeadFormatted Pts$latencyText",
                         style = MaterialTheme.typography.h6,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colors.primary
@@ -994,24 +1187,45 @@ class GameFragment : Fragment() {
               verticalAlignment = Alignment.CenterVertically
             ) {
               if (currentMode == GameMode.AI_BOTH) {
-                // Autoplay Toggle for Mode 4
+                // Autoplay Toggle (Auto / Pause)
                 Button(
-                  onClick = { aiAutoPlay = !aiAutoPlay },
-                  modifier = Modifier.size(80.dp),
-                  shape = CircleShape,
+                  onClick = {
+                    val willPlay = !aiAutoPlay
+                    aiAutoPlay = willPlay
+                    if (willPlay && !isThinking && finalScoreText == null) {
+                      scope.launch { handleAiMove(currentTurn) }
+                    }
+                  },
+                  modifier = Modifier.height(56.dp).width(120.dp),
+                  shape = RoundedCornerShape(28.dp),
                   colors = ButtonDefaults.buttonColors(
-                    backgroundColor = if (aiAutoPlay) Color.Red else Color.Green
+                    backgroundColor = if (aiAutoPlay) Color(0xFFE53935) else Color(0xFF43A047)
                   ),
                   elevation = ButtonDefaults.elevation(6.dp)
                 ) {
-                  Text(if (aiAutoPlay) "STOP" else "AUTO", fontWeight = FontWeight.Bold)
+                  Text(
+                    text = if (aiAutoPlay) context.getString(R.string.btn_pause) else context.getString(R.string.btn_auto),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                  )
                 }
 
-                LaunchedEffect(aiAutoPlay, currentTurn) {
-                  if (aiAutoPlay && currentMode == GameMode.AI_BOTH && !isThinking) {
-                    kotlinx.coroutines.delay(1000)
-                    handleAiMove(currentTurn)
-                  }
+                // Step Button (Execute single AI move when paused)
+                Button(
+                  onClick = {
+                    if (!isThinking && finalScoreText == null) {
+                      scope.launch { handleAiMove(currentTurn) }
+                    }
+                  },
+                  enabled = !aiAutoPlay && !isThinking && finalScoreText == null,
+                  modifier = Modifier.height(56.dp).width(110.dp),
+                  shape = RoundedCornerShape(28.dp),
+                  colors = ButtonDefaults.buttonColors(
+                    backgroundColor = Color.LightGray.copy(alpha = 0.5f)
+                  ),
+                  elevation = ButtonDefaults.elevation(4.dp)
+                ) {
+                  Text(context.getString(R.string.btn_step), fontWeight = FontWeight.Bold)
                 }
               } else {
                 // Pass Button
@@ -1252,59 +1466,79 @@ class GameFragment : Fragment() {
                         }
                       }
 
-                      if (false) {
-                        // --- Model Selection ---
-                        Text(
-                          context.getString(R.string.section_ai_engine),
-                          style = MaterialTheme.typography.overline,
-                          color = MaterialTheme.colors.primary,
-                          fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        
+                      // --- Hardware Acceleration Selection ---
+                      Text(
+                        context.getString(R.string.section_hardware_backend),
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+
+                      val backendsList = listOf(
+                        EngineBackend.AUTO to (context.getString(R.string.backend_auto_title) to context.getString(R.string.backend_auto_desc)),
+                        EngineBackend.TPU to (context.getString(R.string.backend_tpu_title) to context.getString(R.string.backend_tpu_desc)),
+                        EngineBackend.GPU to (context.getString(R.string.backend_gpu_title) to context.getString(R.string.backend_gpu_desc)),
+                        EngineBackend.CPU to (context.getString(R.string.backend_cpu_title) to context.getString(R.string.backend_cpu_desc))
+                      )
+
+                      backendsList.forEach { (b, info) ->
+                        val (title, desc) = info
+                        val isSelected = currentBackend == b
+                        val isSupported = when (b) {
+                          EngineBackend.TPU -> WeiqiApplication.isPixelTpuSupported() && KataGoBridgeTPU.isSupported()
+                          else -> true
+                        }
+
                         Surface(
                           modifier = Modifier
                             .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .pointerInput(Unit) {
-                              detectTapGestures { currentModelName = "model.bin.gz" }
+                            .clickable(enabled = isSupported) {
+                              currentBackend = b
                             },
-                          color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
+                          color = if (isSelected) MaterialTheme.colors.primary.copy(alpha = 0.08f) else Color.Transparent,
                           border = BorderStroke(
-                            width = if (currentModelName == "model.bin.gz") 2.dp else 1.dp,
-                            color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colors.primary else Color.LightGray.copy(alpha = 0.5f)
                           )
                         ) {
                           Row(
-                            modifier = Modifier.padding(16.dp),
+                            modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                           ) {
                             Icon(
-                              Icons.Default.Memory,
+                              imageVector = Icons.Default.Memory,
                               contentDescription = null,
-                              tint = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else Color.Gray,
-                              modifier = Modifier.size(32.dp)
+                              tint = if (isSelected) MaterialTheme.colors.primary else if (!isSupported) Color.LightGray else Color.Gray,
+                              modifier = Modifier.size(28.dp)
                             )
-                            Column(modifier = Modifier.padding(start = 16.dp)) {
+                            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                               Text(
-                                context.getString(R.string.engine_mobile_title),
-                                style = MaterialTheme.typography.subtitle1,
-                                fontWeight = FontWeight.Bold,
-                                color = if (currentModelName == "model.bin.gz") MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
+                                text = title,
+                                style = MaterialTheme.typography.subtitle2,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colors.primary else if (!isSupported) Color.LightGray else MaterialTheme.colors.onSurface
                               )
-                              Text(context.getString(R.string.engine_mobile_desc), style = MaterialTheme.typography.caption)
+                              Text(
+                                text = if (!isSupported && b == EngineBackend.TPU) "Google Pixel devices only" else desc,
+                                style = MaterialTheme.typography.caption,
+                                color = if (!isSupported) Color.LightGray else Color.Gray
+                              )
                             }
-                            Spacer(Modifier.weight(1f))
                             RadioButton(
-                              selected = currentModelName == "model.bin.gz",
-                              onClick = { currentModelName = "model.bin.gz" },
+                              selected = isSelected,
+                              onClick = if (isSupported) { { currentBackend = b } } else null,
+                              enabled = isSupported,
                               colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)
                             )
                           }
                         }
-
-                        Spacer(modifier = Modifier.height(24.dp))
                       }
+
+                      Spacer(modifier = Modifier.height(24.dp))
+
 
 
 
@@ -1515,6 +1749,105 @@ class GameFragment : Fragment() {
                           }
                         }
                       }
+
+                      // --- Diagnostics & Hardware Status ---
+
+                      Spacer(Modifier.height(24.dp))
+                      Text(
+                        context.getString(R.string.section_diagnostics),
+                        style = MaterialTheme.typography.overline,
+                        color = MaterialTheme.colors.primary,
+                        fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(8.dp))
+
+                      Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colors.primary.copy(alpha = 0.06f),
+                        border = BorderStroke(1.dp, MaterialTheme.colors.primary.copy(alpha = 0.25f))
+                      ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                          Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                              imageVector = Icons.Default.Memory,
+                              contentDescription = null,
+                              tint = MaterialTheme.colors.primary,
+                              modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                              text = "Active Backend:",
+                              style = MaterialTheme.typography.caption,
+                              fontWeight = FontWeight.Bold,
+                              color = Color.Gray
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                              text = backendBadgeText,
+                              style = MaterialTheme.typography.caption,
+                              fontWeight = FontWeight.ExtraBold,
+                              color = MaterialTheme.colors.primary
+                            )
+                          }
+                          Spacer(Modifier.height(6.dp))
+                          Text(
+                            text = backendDetailText,
+                            style = MaterialTheme.typography.body2,
+                            fontWeight = FontWeight.Medium
+                          )
+                          if (lastEngineLatencyMs != null) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                              text = "Latest Call Latency: ${formatLatency(lastEngineLatencyMs)}",
+                              style = MaterialTheme.typography.caption,
+                              color = Color.Gray
+                            )
+                          }
+                        }
+                      }
+
+                      Spacer(Modifier.height(12.dp))
+
+                      Surface(
+                        modifier = Modifier
+                          .fillMaxWidth()
+                          .clip(RoundedCornerShape(12.dp))
+                          .clickable {
+                            val newValue = !showEngineLatency
+                            showEngineLatency = newValue
+                            sharedPrefs.edit().putBoolean("show_engine_latency", newValue).apply()
+                          },
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, Color.LightGray.copy(alpha = 0.5f))
+                      ) {
+                        Row(
+                          modifier = Modifier.padding(16.dp),
+                          verticalAlignment = Alignment.CenterVertically
+                        ) {
+                          Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                              text = context.getString(R.string.setting_show_latency),
+                              style = MaterialTheme.typography.subtitle2,
+                              fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                              text = context.getString(R.string.setting_show_latency_desc),
+                              style = MaterialTheme.typography.caption,
+                              color = Color.Gray
+                            )
+                          }
+                          Switch(
+                            checked = showEngineLatency,
+                            onCheckedChange = {
+                              showEngineLatency = it
+                              sharedPrefs.edit().putBoolean("show_engine_latency", it).apply()
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colors.primary)
+                          )
+                        }
+                      }
+
                       Spacer(Modifier.height(100.dp)) // Extra space for fixed footer
                     }
                   }
@@ -1548,9 +1881,10 @@ class GameFragment : Fragment() {
                             .putInt("handicap", handicap)
                             .putString("current_model_name", currentModelName)
                             .putInt("current_visits", currentVisits)
+                            .putString("selected_backend", currentBackend.name)
                             .apply()
                           scope.launch {
-                            startNewGame(currentMode, handicap, currentModelName, currentVisits)
+                            startNewGame(currentMode, handicap, currentModelName, currentVisits, currentBackend)
                           }
                         },
                         shape = RoundedCornerShape(24.dp),
@@ -1651,8 +1985,23 @@ class GameFragment : Fragment() {
         return@withContext -6
       }
 
+      val effectiveModelName = if (bridge is KataGoBridgeTPU) {
+        if (WeiqiApplication.isPixel11Family() && hasAsset("model_tpu_p11.tflite")) {
+          "model_tpu_p11.tflite"
+        } else if (hasAsset("model_tpu_p9.tflite")) {
+          "model_tpu_p9.tflite"
+        } else if (hasAsset("model_tpu.tflite")) {
+          "model_tpu.tflite"
+        } else {
+          modelName
+        }
+      } else {
+        modelName
+      }
+
+
       val configPath = copyAssetToFile("gtp.cfg")
-      val modelPath = copyAssetToFile(modelName)
+      val modelPath = copyAssetToFile(effectiveModelName)
       if (configPath == null || modelPath == null) {
         Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
         if (usableSpace < 230 * 1024 * 1024L) { // ~230MB model extraction space
@@ -1661,9 +2010,21 @@ class GameFragment : Fragment() {
         return@withContext -4 // General Asset Copy Error
       }
 
-      Log.i("GameFragment", "Starting KataGo Engine Init with model $modelName...")
+      Log.i("GameFragment", "Starting KataGo Engine Init with model $effectiveModelName...")
       var result = bridge.init(configPath, modelPath)
       Log.i("GameFragment", "Engine Init Result: $result")
+      if (result != 0 && bridge is KataGoBridgeTPU) {
+        Log.w("GameFragment", "TPU initialization failed ($result). Falling back to OpenCL GPU backend...")
+        try {
+          bridge.shutdown()
+        } catch (e: Exception) {
+          Log.e("GameFragment", "Failed to shutdown TPU bridge", e)
+        }
+        bridge = KataGoBridge()
+        val gpuModelPath = copyAssetToFile("model.bin.gz") ?: modelPath
+        result = bridge.init(configPath, gpuModelPath)
+        Log.i("GameFragment", "GPU Engine Init Result: $result")
+      }
       if (result in -18..-10) {
         Log.w("GameFragment", "GPU initialization failed ($result). Falling back to CPU/Eigen backend...")
         try {
@@ -1672,15 +2033,40 @@ class GameFragment : Fragment() {
           Log.e("GameFragment", "Failed to shutdown GPU bridge", e)
         }
         bridge = KataGoBridgeEigen()
-        result = bridge.init(configPath, modelPath)
+        val cpuModelPath = copyAssetToFile("model.bin.gz") ?: modelPath
+        result = bridge.init(configPath, cpuModelPath)
         Log.i("GameFragment", "CPU/Eigen Engine Init Result: $result")
       }
+
+      val verifiedBackend = when (bridge) {
+        is KataGoBridgeTPU -> if (WeiqiApplication.isPixel11Family()) "TPU_PIXEL_11 (Tensor G6 SantaFe)" else "TPU_PIXEL_9 (Tensor G4 Zuma)"
+        is KataGoBridge -> "GPU_OPENCL"
+        is KataGoBridgeEigen -> "CPU_EIGEN"
+        else -> "UNKNOWN"
+      }
+      Log.i("KataGoBackend", "=============================================")
+      Log.i("KataGoBackend", "VERIFIED RUNTIME BACKEND: $verifiedBackend")
+      Log.i("KataGoBackend", "ACTIVE BRIDGE CLASS: ${bridge.javaClass.simpleName}")
+      Log.i("KataGoBackend", "LOADED MODEL FILE: $effectiveModelName")
+      Log.i("KataGoBackend", "INITIALIZATION STATUS: ${if (result == 0) "SUCCESS" else "FAILED ($result)"}")
+      Log.i("KataGoBackend", "=============================================")
+
       result
     } catch (e: Exception) {
       Log.e("GameFragment", "Engine Init Exception", e)
       -5
     }
   }
+
+  private fun hasAsset(assetName: String): Boolean {
+    return try {
+      requireContext().assets.open(assetName).close()
+      true
+    } catch (e: Exception) {
+      false
+    }
+  }
+
 
   private fun copyAssetToFile(assetName: String): String? {
     val destFile = File(requireContext().filesDir, assetName)
@@ -1736,6 +2122,11 @@ class GameFragment : Fragment() {
     }
   }
 
+  private fun formatLatency(ms: Long?): String {
+    if (ms == null) return ""
+    return String.format(java.util.Locale.US, "%.2fs", ms / 1000.0)
+  }
+
   private fun toGtpCoords(x: Int, y: Int): String {
     val col = if (x >= 8) ('A' + x + 1).toChar() else ('A' + x).toChar()
     val row = 19 - y
@@ -1763,24 +2154,27 @@ class GameFragment : Fragment() {
     onResult(response.startsWith("="), moveStr)
   }
 
-  private suspend fun genAiMove(stone: Stone, bridge: IKataGoBridge, onResult: (Int, Int, String) -> Unit) {
+  private suspend fun genAiMove(stone: Stone, bridge: IKataGoBridge, onResult: (Int, Int, String, Long) -> Unit) {
     val color = if (stone == Stone.BLACK) "black" else "white"
+    val startTime = System.currentTimeMillis()
     val response = withContext(Dispatchers.IO) {
       bridge.sendGtpCommand("genmove $color")
     }
+    val elapsed = System.currentTimeMillis() - startTime
+    Log.i("KataGoLatency", "genmove $color finished in ${elapsed}ms")
     if (response.startsWith("=")) {
       val parts = response.split(" ")
       if (parts.size >= 2) {
         val moveStr = parts[1]
         if (moveStr.uppercase() == "PASS") {
-          onResult(-1, -1, "PASS")
+          onResult(-1, -1, "PASS", elapsed)
         } else {
           val (x, y) = fromGtpCoords(response)
-          onResult(x, y, moveStr)
+          onResult(x, y, moveStr, elapsed)
         }
       }
     } else {
-      onResult(-1, -1, "ERROR")
+      onResult(-1, -1, "ERROR", elapsed)
     }
   }
 

@@ -85,18 +85,58 @@ cc_import(
     visibility = ["//visibility:public"],
 )
 
+cc_library(
+    name = "katago_jni_native_tpu",
+    srcs = ["katago_bridge.cpp"],
+    copts = ["-fexceptions"],
+    linkopts = ["-llog"],
+    deps = [
+        "@katago_repo//:katago_lib_eigen",
+    ],
+    includes = [
+        "../../../../../external/katago_repo+/cpp",
+    ],
+    alwayslink = 1,
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "libkatago_tpu_jni.so",
+    linkshared = 1,
+    linkstatic = 1,
+    linkopts = [
+        "-llog",
+        "-static-libstdc++",
+        "-static-libgcc",
+        "-lunwind",
+        "-Wl,-z,max-page-size=16384",
+    ],
+    deps = [
+        ":katago_jni_native_tpu",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_import(
+    name = "katago_tpu_jni_import",
+    shared_library = ":libkatago_tpu_jni.so",
+    visibility = ["//visibility:public"],
+)
+
 android_library(
     name = "katago_bridge_java",
     srcs = [
         "IKataGoBridge.java",
         "KataGoBridge.java",
         "KataGoBridgeEigen.java",
+        "KataGoBridgeTPU.java",
     ],
     custom_package = "com.cwave.weiqi.katago",
     deps = [
         ":katago_jni_import",
         ":katago_opencl_import",
         ":katago_eigen_jni_import",
+        ":katago_tpu_jni_import",
     ],
     visibility = ["//visibility:public"],
 )
