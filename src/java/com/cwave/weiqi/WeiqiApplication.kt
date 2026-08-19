@@ -58,19 +58,40 @@ class WeiqiApplication : Application() {
     }
 
     /**
-     * Checks if the device is any Google Pixel with Tensor TPU support (Pixel 9, 10, 11).
+     * Checks if the device is a Google Pixel with verified Tensor TPU support (Pixel 9 or Pixel 11 series).
      */
     fun isPixelTpuSupported(): Boolean {
-      return isPixel11Family() || isPixel9Family() || Build.MANUFACTURER.equals("Google", ignoreCase = true)
+      return isPixel11Family() || isPixel9Family()
+    }
+
+    /**
+     * Checks if the device has OpenCL GPU libraries available.
+     */
+    fun hasSystemOpenCL(filesDir: File? = null): Boolean {
+      if (filesDir != null && File(filesDir, "libOpenCL.so").exists()) return true
+      val sources = listOf(
+        "/vendor/lib64/libOpenCL.so",
+        "/system/vendor/lib64/libOpenCL.so",
+        "/system/lib64/libOpenCL.so",
+        "/vendor/lib/libOpenCL.so"
+      )
+      return sources.any {
+        val f = File(it)
+        f.exists() && f.canRead()
+      }
     }
   }
 
   override fun onCreate() {
     super.onCreate()
     DynamicColors.applyToActivitiesIfAvailable(this)
-    copySystemOpenCL()
-    copyPixelTpuLibraries()
+    // Run file extraction on background thread to prevent UI thread cold-start ANR
+    Thread {
+      copySystemOpenCL()
+      copyPixelTpuLibraries()
+    }.start()
   }
+
 
 
   private fun copySystemOpenCL() {

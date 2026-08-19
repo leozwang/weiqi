@@ -79,19 +79,30 @@ class GameFragment : Fragment() {
   }
 
   private fun createEngineBridge(backendPreference: EngineBackend = EngineBackend.AUTO): IKataGoBridge {
+    val filesDir = try { requireContext().filesDir } catch (e: Exception) { null }
+    val hasOpenCL = WeiqiApplication.hasSystemOpenCL(filesDir)
+
     return when (backendPreference) {
       EngineBackend.TPU -> {
-        if (KataGoBridgeTPU.isSupported()) {
+        if (WeiqiApplication.isPixelTpuSupported() && KataGoBridgeTPU.isSupported()) {
           Log.i("GameFragment", "Explicit TPU backend requested. Initializing KataGoBridgeTPU.")
           KataGoBridgeTPU()
-        } else {
+        } else if (hasOpenCL) {
           Log.w("GameFragment", "TPU backend not available, falling back to OpenCL GPU.")
           KataGoBridge()
+        } else {
+          Log.w("GameFragment", "TPU and OpenCL not available, falling back to CPU (Eigen).")
+          KataGoBridgeEigen()
         }
       }
       EngineBackend.GPU -> {
-        Log.i("GameFragment", "Explicit GPU (OpenCL) backend requested. Initializing KataGoBridge.")
-        KataGoBridge()
+        if (hasOpenCL) {
+          Log.i("GameFragment", "Explicit GPU (OpenCL) backend requested. Initializing KataGoBridge.")
+          KataGoBridge()
+        } else {
+          Log.w("GameFragment", "OpenCL not available on this device, falling back to CPU (Eigen).")
+          KataGoBridgeEigen()
+        }
       }
       EngineBackend.CPU -> {
         Log.i("GameFragment", "Explicit CPU (Eigen) backend requested. Initializing KataGoBridgeEigen.")
@@ -106,13 +117,17 @@ class GameFragment : Fragment() {
           }
           Log.i("GameFragment", "Auto backend: $chipName detected. Initializing KataGoBridgeTPU.")
           KataGoBridgeTPU()
-        } else {
-          Log.i("GameFragment", "Auto backend: Initializing KataGoBridge (OpenCL GPU).")
+        } else if (hasOpenCL) {
+          Log.i("GameFragment", "Auto backend: OpenCL GPU detected. Initializing KataGoBridge (OpenCL GPU).")
           KataGoBridge()
+        } else {
+          Log.i("GameFragment", "Auto backend: No OpenCL GPU detected. Initializing KataGoBridgeEigen (CPU).")
+          KataGoBridgeEigen()
         }
       }
     }
   }
+
 
   enum class Stone { EMPTY, BLACK, WHITE }
   enum class GameMode { USER_BLACK, USER_WHITE, USER_BOTH, AI_BOTH }
@@ -227,10 +242,10 @@ class GameFragment : Fragment() {
               Box(
                 modifier = Modifier
                   .fillMaxSize()
-                  .background(Color.Black.copy(alpha = 0.6f))
-                  .pointerInput(Unit) {},
+                  .background(Color.Black.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center
               ) {
+
                 Card(
                   shape = RoundedCornerShape(24.dp),
                   elevation = 8.dp,
