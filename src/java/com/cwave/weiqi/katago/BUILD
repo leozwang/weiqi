@@ -130,13 +130,18 @@ android_library(
         "KataGoBridge.java",
         "KataGoBridgeEigen.java",
         "KataGoBridgeTPU.java",
+        "TfLiteTpuEvaluator.java",
     ],
+
     custom_package = "com.cwave.weiqi.katago",
     deps = [
         ":katago_jni_import",
         ":katago_opencl_import",
         ":katago_eigen_jni_import",
         ":katago_tpu_jni_import",
+        "@maven//:org_tensorflow_tensorflow_lite",
+        "@maven//:org_tensorflow_tensorflow_lite_api",
     ],
     visibility = ["//visibility:public"],
 )
+

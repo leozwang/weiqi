@@ -2017,7 +2017,9 @@ class GameFragment : Fragment() {
 
       val configPath = copyAssetToFile("gtp.cfg")
       val modelPath = copyAssetToFile(effectiveModelName)
+      copyAssetToFile("model.bin.gz") // Ensure base structure model is available for KataGo metadata
       if (configPath == null || modelPath == null) {
+
         Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
         if (usableSpace < 230 * 1024 * 1024L) { // ~230MB model extraction space
           return@withContext -6 // Storage Space Error
@@ -2029,17 +2031,10 @@ class GameFragment : Fragment() {
       var result = bridge.init(configPath, modelPath)
       Log.i("GameFragment", "Engine Init Result: $result")
       if (result != 0 && bridge is KataGoBridgeTPU) {
-        Log.w("GameFragment", "TPU initialization failed ($result). Falling back to OpenCL GPU backend...")
-        try {
-          bridge.shutdown()
-        } catch (e: Exception) {
-          Log.e("GameFragment", "Failed to shutdown TPU bridge", e)
-        }
-        bridge = KataGoBridge()
-        val gpuModelPath = copyAssetToFile("model.bin.gz") ?: modelPath
-        result = bridge.init(configPath, gpuModelPath)
-        Log.i("GameFragment", "GPU Engine Init Result: $result")
+        Log.e("GameFragment", "TPU initialization failed ($result). Strict TPU mode enforced - throwing exception!")
+        throw IllegalStateException("TPU Initialization Failed (Error Code: $result). Execution halted.")
       }
+
       if (result in -18..-10) {
         Log.w("GameFragment", "GPU initialization failed ($result). Falling back to CPU/Eigen backend...")
         try {

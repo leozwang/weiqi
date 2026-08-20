@@ -23,20 +23,34 @@
 #include "program/playutils.h"
 #include "search/asyncbot.h"
 #include "program/play.h"
+#include "neuralnet/nneval.h"
 #include "main.h"
+
 
 #define TAG "KataGoBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // Global state for the engine
+JavaVM* g_jvm = nullptr;
+bool g_useTpuEvaluator = false;
+jobject g_tpuEvaluatorObj = nullptr;
+jmethodID g_evaluateMethodID = nullptr;
+
+extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    g_jvm = vm;
+    return JNI_VERSION_1_6;
+}
+
 namespace {
+
     std::mutex engineMutex;
     std::unique_ptr<AsyncBot> bot;
     NNEvaluator* g_nnEval = nullptr;
     std::unique_ptr<Logger> logger;
     std::unique_ptr<Rand> seedRand;
     bool initialized = false;
+
 
     void oneTimeInit() {
         static std::once_flag flag;
@@ -272,6 +286,10 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         
         TimeControls tc;
         Loc moveLoc = bot->genMoveSynchronous(pla, tc);
+
+
+
+
         
         auto endTime = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
@@ -548,9 +566,56 @@ Java_com_cwave_weiqi_katago_KataGoBridgeEigen_shutdown(JNIEnv* env, jobject thiz
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_cwave_weiqi_katago_KataGoBridgeTPU_init(JNIEnv *env, jobject thiz, jstring config_path, jstring model_path) {
-    LOGI("KataGoBridgeTPU::init called - initializing engine for Pixel 9 Tensor G4 TPU");
+    LOGI("KataGoBridgeTPU::init called - initializing Edge TPU backend");
+
+    const char* cModelPath = env->GetStringUTFChars(model_path, nullptr);
+    std::string pathStr(cModelPath ? cModelPath : "");
+    if (cModelPath) env->ReleaseStringUTFChars(model_path, cModelPath);
+
+    if (pathStr.rfind(".tflite") != std::string::npos) {
+        LOGI("Initializing TFLite TPU Evaluator for model: %s", pathStr.c_str());
+        jclass fileClass = env->FindClass("java/io/File");
+        if (fileClass) {
+            jmethodID fileConstr = env->GetMethodID(fileClass, "<init>", "(Ljava/lang/String;)V");
+            jobject fileObj = env->NewObject(fileClass, fileConstr, model_path);
+
+            jclass evaluatorClass = env->FindClass("com/cwave/weiqi/katago/TfLiteTpuEvaluator");
+            if (evaluatorClass) {
+                jmethodID evaluatorConstr = env->GetMethodID(evaluatorClass, "<init>", "(Ljava/io/File;)V");
+                jobject evaluatorObj = env->NewObject(evaluatorClass, evaluatorConstr, fileObj);
+                jmethodID isInitMethod = env->GetMethodID(evaluatorClass, "isInitialized", "()Z");
+                jboolean isInit = (evaluatorObj && isInitMethod) ? env->CallBooleanMethod(evaluatorObj, isInitMethod) : JNI_FALSE;
+
+                if (isInit) {
+                    LOGI("TfLiteTpuEvaluator created and initialized successfully on device TPU!");
+                    g_useTpuEvaluator = true;
+                    if (g_tpuEvaluatorObj) env->DeleteGlobalRef(g_tpuEvaluatorObj);
+                    g_tpuEvaluatorObj = env->NewGlobalRef(evaluatorObj);
+                    g_evaluateMethodID = env->GetMethodID(evaluatorClass, "evaluate", "([F[F[F[F[F)Z");
+
+                    size_t lastSlash = pathStr.rfind('/');
+                    std::string dirPath = (lastSlash != std::string::npos) ? pathStr.substr(0, lastSlash + 1) : "";
+                    std::string binGzPath = dirPath + "model.bin.gz";
+                    LOGI("Loading KataGo structure metadata from %s", binGzPath.c_str());
+                    jstring jBinGzPath = env->NewStringUTF(binGzPath.c_str());
+                    return Java_com_cwave_weiqi_katago_KataGoBridge_init(env, thiz, config_path, jBinGzPath);
+                } else {
+                    g_useTpuEvaluator = false;
+                    LOGE("TfLiteTpuEvaluator failed to initialize on device TPU.");
+                    return -100; // Strict TPU Failure Code
+                }
+
+
+
+
+            }
+        }
+    }
+
     return Java_com_cwave_weiqi_katago_KataGoBridge_init(env, thiz, config_path, model_path);
 }
+
+
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_cwave_weiqi_katago_KataGoBridgeTPU_sendGtpCommand(JNIEnv* env, jobject thiz, jstring command) {

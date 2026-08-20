@@ -132,7 +132,10 @@ maven.install(
         "org.mockito.kotlin:mockito-kotlin:4.1.0",
         "org.slf4j:slf4j-simple:2.0.17",
         "com.android.billingclient:billing-ktx:8.0.0",
+        "org.tensorflow:tensorflow-lite:2.16.1",
+        "org.tensorflow:tensorflow-lite-api:2.16.1",
     ],
+
     known_contributing_modules = ["protobuf"],
     repositories = [
         "https://maven.google.com",
