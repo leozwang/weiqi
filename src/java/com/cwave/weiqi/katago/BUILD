@@ -139,8 +139,8 @@ android_library(
         ":katago_opencl_import",
         ":katago_eigen_jni_import",
         ":katago_tpu_jni_import",
-        "@maven//:org_tensorflow_tensorflow_lite",
-        "@maven//:org_tensorflow_tensorflow_lite_api",
+        "@maven//:com_google_ai_edge_litert_litert",
+        "@maven//:com_google_ai_edge_litert_litert_api",
     ],
     visibility = ["//visibility:public"],
 )
