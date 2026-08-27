@@ -42,7 +42,7 @@ public class TfLiteTpuEvaluator {
                 int lastDim = (shape.length > 0) ? shape[shape.length - 1] : 0;
                 if (lastDim == 362) {
                     mPolicyTensorIdx = i;
-                } else if (lastDim == 4) {
+                } else if (lastDim == 7 || lastDim == 4) {
                     mValueTensorIdx = i;
                 } else if (lastDim == 361) {
                     mOwnershipTensorIdx = i;
@@ -69,7 +69,7 @@ public class TfLiteTpuEvaluator {
         float[] spatialInput,   // [22 * 19 * 19] = 7942 floats in NCHW layout
         float[] globalInput,    // [19] floats
         float[] policyOutput,   // [362] floats (361 board + 1 pass)
-        float[] valueOutput,    // [4] floats (win, loss, noResult, scoreMean)
+        float[] valueOutput,    // [7] floats (win, loss, noResult, scoreMean, scoreMeanSq, lead, varTimeLeft)
         float[] ownershipOutput // [361] floats
     ) {
         if (!isInitialized()) {
@@ -96,7 +96,9 @@ public class TfLiteTpuEvaluator {
             Object[] inputs = new Object[] { spatialTensor, globalTensor };
 
             float[][] outPolicy = new float[1][362];
-            float[][] outValue = new float[1][4];
+            int[] valueShape = mInterpreter.getOutputTensor(mValueTensorIdx).shape();
+            int valueLen = (valueShape.length > 0) ? valueShape[valueShape.length - 1] : 7;
+            float[][] outValue = new float[1][valueLen];
             float[][] outOwnership = new float[1][361];
 
             Map<Integer, Object> outputs = new HashMap<>();
@@ -109,7 +111,8 @@ public class TfLiteTpuEvaluator {
             mInterpreter.runForMultipleInputsOutputs(inputs, outputs);
 
             System.arraycopy(outPolicy[0], 0, policyOutput, 0, 362);
-            System.arraycopy(outValue[0], 0, valueOutput, 0, 4);
+            int copyLen = Math.min(valueLen, valueOutput.length);
+            System.arraycopy(outValue[0], 0, valueOutput, 0, copyLen);
             if (mOwnershipTensorIdx >= 0) {
                 System.arraycopy(outOwnership[0], 0, ownershipOutput, 0, 361);
             }
@@ -132,7 +135,7 @@ public class TfLiteTpuEvaluator {
                     }
                 }
                 Log.i(TAG, String.format("TPU Eval #%d: Top Policy: #1[idx=%d, val=%.3f], #2[idx=%d, val=%.3f], #3[idx=%d, val=%.3f], passVal[361]=%.3f | Value[win=%.3f, loss=%.3f, score=%.3f]",
-                    evalCount, idx1, max1, idx2, max2, idx3, max3, outPolicy[0][361], outValue[0][0], outValue[0][1], outValue[0][3]));
+                    evalCount, idx1, max1, idx2, max2, idx3, max3, outPolicy[0][361], outValue[0][0], outValue[0][1], (outValue[0].length > 3 ? outValue[0][3] : 0.0f)));
             }
 
             return true;

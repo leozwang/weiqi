@@ -467,16 +467,28 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
         nlohmann::json json;
         // perspective: P_BLACK is usually 1, P_WHITE is 2 in KataGo
         Player perspective = P_BLACK; // Always get from Black's perspective for consistency in bridge
-        if (parts.size() >= 2) {
-            std::string pStr = parts[1];
-            if (pStr == "black" || pStr == "b") perspective = P_BLACK;
-            else if (pStr == "white" || pStr == "w") perspective = P_WHITE;
+        int64_t analysisVisits = 40;
+        if (parts.size() >= 3) {
+            try {
+                analysisVisits = std::stoll(parts[2]);
+            } catch (...) {}
         }
 
         Player rootPla = bot->getRootPla();
-        LOGI("AI kata-get-analysis: perspective=%d, root=%d", (int)perspective, (int)rootPla);
+        LOGI("AI kata-get-analysis: perspective=%d, root=%d, visits=%ld", (int)perspective, (int)rootPla, (long)analysisVisits);
 
-        bool success = bot->getSearch()->getAnalysisJson(
+        Search* search = bot->getSearchStopAndWait();
+        if (search->getRootNode() == nullptr || search->getRootVisits() < analysisVisits) {
+            SearchParams oldP = bot->getParams();
+            SearchParams newP = oldP;
+            newP.maxVisits = analysisVisits;
+            newP.maxPlayouts = analysisVisits;
+            bot->setParamsNoClearing(newP);
+            search->runWholeSearch(rootPla);
+            bot->setParamsNoClearing(oldP);
+        }
+
+        bool success = search->getAnalysisJson(
             perspective,
             10,    // analysisPVLen
             false, // preventEncore

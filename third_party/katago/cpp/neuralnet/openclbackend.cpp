@@ -2993,7 +2993,7 @@ void evaluateBoardOnTpu(
         jfloatArray jSpatial = env->NewFloatArray(19 * 19 * 22);
         jfloatArray jGlobal = env->NewFloatArray(19);
         jfloatArray jPolicy = env->NewFloatArray(362);
-        jfloatArray jValue = env->NewFloatArray(4);
+        jfloatArray jValue = env->NewFloatArray(7);
         jfloatArray jOwnership = env->NewFloatArray(361);
 
         env->SetFloatArrayRegion(jSpatial, 0, 19 * 19 * 22, rowSpatialInput);
@@ -3010,16 +3010,16 @@ void evaluateBoardOnTpu(
             SymmetryHelpers::copyOutputsWithSymmetry(rawPolicy, output->policyProbs, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
             output->policyProbs[nnXLen * nnYLen] = rawPolicy[361];
 
-            // 2. Value & score outputs from trained TPU model
-            float valueBuf[4];
-            env->GetFloatArrayRegion(jValue, 0, 4, valueBuf);
+            // 2. Value (3 channels) & Score (4 channels) outputs from trained TPU model
+            float valueBuf[7];
+            env->GetFloatArrayRegion(jValue, 0, 7, valueBuf);
             output->whiteWinProb = valueBuf[0];
             output->whiteLossProb = valueBuf[1];
             output->whiteNoResultProb = valueBuf[2];
             output->whiteScoreMean = valueBuf[3];
-            output->whiteScoreMeanSq = valueBuf[3] * valueBuf[3];
-            output->whiteLead = valueBuf[3];
-            output->varTimeLeft = 0.0f;
+            output->whiteScoreMeanSq = valueBuf[4];
+            output->whiteLead = valueBuf[5];
+            output->varTimeLeft = valueBuf[6];
             output->shorttermWinlossError = 0.0f;
             output->shorttermScoreError = 0.0f;
 

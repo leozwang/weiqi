@@ -341,13 +341,8 @@ def convert_katago_model(bin_gz_path: str, output_p11_path: str, output_p9_path:
     score_logits = l_sv3_mul(x_v2)
     l_sv3_mul.set_weights([sv3_mul[2], sv3_bias[2]])
 
-    # Take whiteWinProb (index 0) from win_logits and whiteScoreMean (index 0) from score_logits
-    v_win = win_logits[:, 0:1]
-    v_loss = win_logits[:, 1:2]
-    v_noresult = win_logits[:, 2:3]
-    v_score = score_logits[:, 0:1]
-
-    value_output = tf.keras.layers.Concatenate(name="value_output")([v_win, v_loss, v_noresult, v_score])
+    # Win/loss logits (3 channels: win, loss, noresult) + Score logits (4 channels: scoreMean, scoreMeanSq, lead, varTimeLeft)
+    value_output = tf.keras.layers.Concatenate(name="value_output")([win_logits, score_logits])
 
 
     # --- Ownership Head ---

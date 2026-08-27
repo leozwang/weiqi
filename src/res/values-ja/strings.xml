@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">碁 Weiqi Go</string>
-    <string name="tuning_gpu">围棋 碁 GO!\n\nGPUのチューニング中...\n初回のみ1〜2分かかります</string>
+    <string name="tuning_gpu">围棋 碁 GO!\n\nGPUのチューニング中...\n初回のみ5〜10分かかります</string>
     <string name="tuning_tpu">围棋 碁 GO!\n\nTPUのチューニング中...\n初回のみ</string>
     <string name="initializing_engine">围棋 碁 GO!\nエンジンを初期化中...</string>
     <string name="section_diagnostics">診断とハードウェア情報</string>

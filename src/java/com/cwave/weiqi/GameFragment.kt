@@ -242,37 +242,37 @@ class GameFragment : Fragment() {
               Box(
                 modifier = Modifier
                   .fillMaxSize()
-                  .background(Color.Black.copy(alpha = 0.6f)),
-                contentAlignment = Alignment.Center
+                  .padding(16.dp),
+                contentAlignment = Alignment.BottomCenter
               ) {
-
                 Card(
-                  shape = RoundedCornerShape(24.dp),
-                  elevation = 8.dp,
-                  modifier = Modifier.padding(32.dp)
+                  shape = RoundedCornerShape(16.dp),
+                  elevation = 6.dp,
+                  backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.95f)
                 ) {
-                  Column(
-                    modifier = Modifier.padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                  Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                   ) {
                     CircularProgressIndicator(
                       color = MaterialTheme.colors.primary,
-                      strokeWidth = 4.dp
+                      strokeWidth = 3.dp,
+                      modifier = Modifier.size(22.dp)
                     )
-                    Spacer(Modifier.height(24.dp))
-                    Text(
-                      text = statusText,
-                      style = MaterialTheme.typography.h6,
-                      fontWeight = FontWeight.Bold,
-                      textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                      text = "Please wait, this happens only once.",
-                      style = MaterialTheme.typography.caption,
-                      color = Color.Gray
-                    )
+                    Column {
+                      Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.subtitle2,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colors.onSurface
+                      )
+                      Text(
+                        text = "Preparing AI engine...",
+                        style = MaterialTheme.typography.caption,
+                        color = Color.Gray
+                      )
+                    }
                   }
                 }
               }
@@ -298,7 +298,7 @@ class GameFragment : Fragment() {
     onEngineErrorChange: (Int?) -> Unit
   ) {
     val scope = rememberCoroutineScope()
-    val isPremiumUnlocked by billingManager.isPremiumUnlocked.collectAsState()
+    val isPremiumUnlocked = true
     val productDetails by billingManager.productDetails.collectAsState()
     var boardState by remember { mutableStateOf(Array(boardSize) { Array(boardSize) { Stone.EMPTY } }) }
     var previewMove by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -396,34 +396,12 @@ class GameFragment : Fragment() {
 
     // Automatically update analysis when turn changes or analysis is toggled ON
     LaunchedEffect(currentTurn, showAnalysis) {
-      if (showAnalysis && isEngineInitialized) {
-        val isHumanTurn = when(currentMode) {
-            GameMode.USER_BLACK -> currentTurn == Stone.BLACK
-            GameMode.USER_WHITE -> currentTurn == Stone.WHITE
-            GameMode.USER_BOTH -> true
-            GameMode.AI_BOTH -> false
-        }
-
-        if (isHumanTurn && !isThinking) {
-            val colorStr = if (currentTurn == Stone.WHITE) "white" else "black"
-            withContext(Dispatchers.IO) {
-                onStatusTextChange("Analyzing position...")
-                val analysisVisits = (currentVisits * 0.4).toInt().coerceIn(100, 1000)
-                val startTime = System.currentTimeMillis()
-                bridge.sendGtpCommand("think $colorStr $analysisVisits")
-                val elapsed = System.currentTimeMillis() - startTime
-                lastEngineLatencyMs = elapsed
-                Log.i("KataGoLatency", "[$backendBadgeText] think $colorStr completed in ${elapsed}ms")
-                onStatusTextChange("Turn.")
-            }
-        }
-        
-        if (!isThinking) {
-            val startTime = System.currentTimeMillis()
-            analysis = getAnalysis(bridge, currentTurn)
-            val elapsed = System.currentTimeMillis() - startTime
-            lastEngineLatencyMs = elapsed
-        }
+      if (showAnalysis && isEngineInitialized && !isThinking) {
+        val startTime = System.currentTimeMillis()
+        analysis = getAnalysis(bridge, currentTurn)
+        val elapsed = System.currentTimeMillis() - startTime
+        lastEngineLatencyMs = elapsed
+        Log.i("KataGoLatency", "[$backendBadgeText] Analysis updated in ${elapsed}ms")
       }
     }
 
@@ -443,7 +421,7 @@ class GameFragment : Fragment() {
         
     LaunchedEffect(Unit) {
       withContext(Dispatchers.IO) {
-        val path = copyAssetToFile("place_stone.mp3")
+        val path = copyAssetToFile(context.applicationContext, "place_stone.mp3")
         if (path != null) {
           soundId.value = soundPool.load(path, 1)
         }
@@ -1038,51 +1016,6 @@ class GameFragment : Fragment() {
                         }
                       }
                     }
-
-                    // Draw Candidate Moves (Suggestions)
-                    val bestMove = analysis.candidates.maxByOrNull { it.visits }
-
-                    analysis.candidates.forEach { candidate ->
-                      val centerX = marginPx + candidate.x * stepPx
-                    val centerY = marginPx + candidate.y * stepPx
-                    val candidateRadius = stoneRadius * 0.75f // 75% of stone size
-
-                    if (candidate == bestMove) {
-                      // Highlight best move with a dark red ring
-                      drawCircle(
-                        color = Color(0xFFB71C1C), // Dark Red
-                        radius = stoneRadius * 0.9f,
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 3.dp.toPx())
-                      )
-                    } else {
-                      // Other candidates as solid light red dots
-                      drawCircle(
-                        color = Color(0xFFE57373), // Light Red
-                        radius = candidateRadius,
-                        center = Offset(centerX, centerY)
-                      )
-                    }
-
-                    // Winrate text
-                    val winrateText = "${(candidate.winrate * 100).toInt()}%"
-                    val textPaint = android.graphics.Paint().apply {
-                      color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C")
-                      else android.graphics.Color.WHITE
-                        textSize = 8.dp.toPx()
-                      textAlign = android.graphics.Paint.Align.CENTER
-                      isAntiAlias = true
-                      typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    }
-                    drawIntoCanvas { canvas ->
-                      canvas.nativeCanvas.drawText(
-                        winrateText,
-                        centerX,
-                        centerY + 3.dp.toPx(),
-                        textPaint
-                      )
-                    }
-                    }
                   }
 
                   // Draw Stones
@@ -1131,7 +1064,56 @@ class GameFragment : Fragment() {
                         }
                       }
                     }
-                                 // Draw Preview Stone (Ghost Stone)
+                  }
+
+                  if (showAnalysis && finalScoreText == null) {
+                    // Draw Candidate Moves (Suggestions)
+                    val bestMove = analysis.candidates.maxByOrNull { it.visits }
+
+                    analysis.candidates.forEach { candidate ->
+                      val centerX = marginPx + candidate.x * stepPx
+                      val centerY = marginPx + candidate.y * stepPx
+                      val candidateRadius = stoneRadius * 0.75f // 75% of stone size
+
+                      if (candidate == bestMove) {
+                        // Highlight best move with a dark red ring
+                        drawCircle(
+                          color = Color(0xFFB71C1C), // Dark Red
+                          radius = stoneRadius * 0.9f,
+                          center = Offset(centerX, centerY),
+                          style = Stroke(width = 3.dp.toPx())
+                        )
+                      } else {
+                        // Other candidates as solid light red dots
+                        drawCircle(
+                          color = Color(0xFFE57373), // Light Red
+                          radius = candidateRadius,
+                          center = Offset(centerX, centerY)
+                        )
+                      }
+
+                      // Display candidate move winrate from the perspective of the player whose turn it is
+                      val displayedWinrate = if (currentTurn == Stone.WHITE) 1.0 - candidate.winrate else candidate.winrate
+                      val winratePercent = (displayedWinrate * 100).toInt().coerceIn(0, 100)
+                      val winrateText = "$winratePercent%"
+                      val textPaint = android.graphics.Paint().apply {
+                        color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C")
+                        else android.graphics.Color.WHITE
+                        textSize = 9.dp.toPx()
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                      }
+                      drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawText(
+                          winrateText,
+                          centerX,
+                          centerY + 3.5f.dp.toPx(),
+                          textPaint
+                        )
+                      }
+                    }
+                  }                       // Draw Preview Stone (Ghost Stone)
                   previewMove?.let { (px, py) ->
                     val centerX = marginPx + px * stepPx
                     val centerY = marginPx + py * stepPx
@@ -1191,7 +1173,6 @@ class GameFragment : Fragment() {
                     }
                   }
                 }
-              }
               }
             }
 
@@ -1993,19 +1974,20 @@ class GameFragment : Fragment() {
 
   private suspend fun initEngine(modelName: String): Int = withContext(Dispatchers.IO) {
     try {
+      val appContext = context?.applicationContext ?: return@withContext -5
       // Check disk space for safety first
-      val usableSpace = requireContext().filesDir.usableSpace
+      val usableSpace = appContext.filesDir.usableSpace
       if (usableSpace < 50 * 1024 * 1024L) { // absolute minimum 50MB
         Log.e("GameFragment", "Aborting engine init: critical storage low ($usableSpace bytes).")
         return@withContext -6
       }
 
       val effectiveModelName = if (bridge is KataGoBridgeTPU) {
-        if (WeiqiApplication.isPixel11Family() && hasAsset("model_tpu_p11.tflite")) {
+        if (WeiqiApplication.isPixel11Family() && hasAsset(appContext, "model_tpu_p11.tflite")) {
           "model_tpu_p11.tflite"
-        } else if (hasAsset("model_tpu_p9.tflite")) {
+        } else if (hasAsset(appContext, "model_tpu_p9.tflite")) {
           "model_tpu_p9.tflite"
-        } else if (hasAsset("model_tpu.tflite")) {
+        } else if (hasAsset(appContext, "model_tpu.tflite")) {
           "model_tpu.tflite"
         } else {
           modelName
@@ -2015,9 +1997,9 @@ class GameFragment : Fragment() {
       }
 
 
-      val configPath = copyAssetToFile("gtp.cfg")
-      val modelPath = copyAssetToFile(effectiveModelName)
-      copyAssetToFile("model.bin.gz") // Ensure base structure model is available for KataGo metadata
+      val configPath = copyAssetToFile(appContext, "gtp.cfg")
+      val modelPath = copyAssetToFile(appContext, effectiveModelName)
+      copyAssetToFile(appContext, "model.bin.gz") // Ensure base structure model is available for KataGo metadata
       if (configPath == null || modelPath == null) {
 
         Log.e("GameFragment", "Failed to extract assets: cfg=$configPath, model=$modelPath")
@@ -2043,7 +2025,7 @@ class GameFragment : Fragment() {
           Log.e("GameFragment", "Failed to shutdown GPU bridge", e)
         }
         bridge = KataGoBridgeEigen()
-        val cpuModelPath = copyAssetToFile("model.bin.gz") ?: modelPath
+        val cpuModelPath = copyAssetToFile(appContext, "model.bin.gz") ?: modelPath
         result = bridge.init(configPath, cpuModelPath)
         Log.i("GameFragment", "CPU/Eigen Engine Init Result: $result")
       }
@@ -2068,9 +2050,9 @@ class GameFragment : Fragment() {
     }
   }
 
-  private fun hasAsset(assetName: String): Boolean {
+  private fun hasAsset(appContext: android.content.Context, assetName: String): Boolean {
     return try {
-      requireContext().assets.open(assetName).close()
+      appContext.assets.open(assetName).close()
       true
     } catch (e: Exception) {
       false
@@ -2078,8 +2060,8 @@ class GameFragment : Fragment() {
   }
 
 
-  private fun copyAssetToFile(assetName: String): String? {
-    val destFile = File(requireContext().filesDir, assetName)
+  private fun copyAssetToFile(appContext: android.content.Context, assetName: String): String? {
+    val destFile = File(appContext.filesDir, assetName)
 
     // If file already exists and has substantial size, skip copying
     // g170 model is ~200MB, gtp.cfg is ~30KB
@@ -2090,22 +2072,22 @@ class GameFragment : Fragment() {
 
     // Defensive Check: Verify Usable Space before copying large assets
     val requiredBytes = try {
-      requireContext().assets.openFd(assetName).use { it.length }
+      appContext.assets.openFd(assetName).use { it.length }
     } catch (e: Exception) {
       // For compressed files or assets where openFd isn't supported, fallback to estimated thresholds
       if (assetName.endsWith(".gz")) 180 * 1024 * 1024L else 1024 * 1024L
     }
 
-    val usableSpace = requireContext().filesDir.usableSpace
+    val usableSpace = appContext.filesDir.usableSpace
     if (usableSpace < requiredBytes + (15 * 1024 * 1024L)) { // require 15MB safety buffer
       Log.e("GameFragment", "Insufficient space to extract $assetName. Required: $requiredBytes, Usable: $usableSpace")
       return null
     }
 
-    val tempFile = File(requireContext().filesDir, "$assetName.tmp")
+    val tempFile = File(appContext.filesDir, "$assetName.tmp")
     try {
       Log.i("GameFragment", "Extracting asset $assetName to internal storage...")
-      requireContext().assets.open(assetName).use { inputStream ->
+      appContext.assets.open(assetName).use { inputStream ->
         FileOutputStream(tempFile).use { outputStream ->
           inputStream.copyTo(outputStream)
         }
@@ -2204,11 +2186,9 @@ class GameFragment : Fragment() {
     return newBoard
   }
 
-  private suspend fun getAnalysis(bridge: IKataGoBridge, perspective: Stone): AnalysisResult = withContext(Dispatchers.IO) {
-    // Query analysis from specified perspective
-    val colorStr = if (perspective == Stone.WHITE) "white" else "black"
-    Log.i("GameFragment", "Requesting analysis for $colorStr...")
-    val response = bridge.sendGtpCommand("kata-get-analysis $colorStr")
+  private suspend fun getAnalysis(bridge: IKataGoBridge, perspective: Stone = Stone.BLACK, visits: Int = 100): AnalysisResult = withContext(Dispatchers.IO) {
+    // Always query analysis from Black's perspective so UI consistently displays Black winrate / scoreLead
+    val response = bridge.sendGtpCommand("kata-get-analysis black $visits")
     if (response.startsWith("=")) {
       try {
         val jsonStr = response.substring(1).trim()
@@ -2241,6 +2221,32 @@ class GameFragment : Fragment() {
                             visits = moveInfo.getLong("visits")
             ))
           }
+        }
+
+        // If no MCTS search visits have occurred yet for this position, extract top recommendations from raw neural network policy
+        if (candidates.isEmpty() && json.has("policy")) {
+          val rawBoard = bridge.boardState
+          val policyArray = json.getJSONArray("policy")
+          val policyCandidates = mutableListOf<CandidateMove>()
+          val boardArea = boardSize * boardSize
+          val limit = minOf(boardArea, policyArray.length())
+          for (i in 0 until limit) {
+            val prob = policyArray.getDouble(i)
+            if (prob > 0.005) { // 0.5% threshold
+              val x = i % boardSize
+              val y = i / boardSize
+              val isEmpty = rawBoard == null || rawBoard[y * boardSize + x] == 0
+              if (isEmpty) {
+                policyCandidates.add(CandidateMove(
+                  x = x,
+                  y = y,
+                  winrate = winrate,
+                  visits = (prob * 1000).toLong()
+                ))
+              }
+            }
+          }
+          candidates.addAll(policyCandidates.sortedByDescending { it.visits }.take(5))
         }
 
         val topCandidates = candidates.sortedByDescending { it.visits }.take(5)
