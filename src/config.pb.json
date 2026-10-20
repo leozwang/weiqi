@@ -15,6 +15,10 @@
           "negate": false
         }
       ]
+    },
+    "uncompress_native_libraries": {
+      "enabled": true,
+      "alignment": "PAGE_ALIGNMENT_16K"
     }
   }
 }

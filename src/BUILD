@@ -80,6 +80,7 @@ kt_android_library(
         "@maven//:com_google_android_material_material",
         "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android",
         "@maven//:com_google_guava_listenablefuture",
+        "@maven//:com_android_billingclient_billing",
         "@maven//:com_android_billingclient_billing_ktx",
     ],
 )
@@ -90,6 +91,10 @@ android_binary(
     manifest = "AndroidManifest.xml",
     manifest_values = {
         "applicationId": "com.cwave.weiqi",
+        "minSdkVersion": "26",
+        "targetSdkVersion": "36",
+        "versionCode": "25",
+        "versionName": "3.5",
     },
     nocompress_extensions = [
         ".so",
@@ -99,7 +104,6 @@ android_binary(
          ":lib",
          "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
          "//src/java/com/cwave/weiqi/katago:libkatago_eigen_jni.so",
-         "//src/java/com/cwave/weiqi/katago:libkatago_tpu_jni.so",
     ],
 )
 
@@ -124,6 +128,10 @@ android_application(
     manifest = "AndroidManifest.xml",
     manifest_values = {
         "applicationId": "com.cwave.weiqi",
+        "minSdkVersion": "26",
+        "targetSdkVersion": "36",
+        "versionCode": "25",
+        "versionName": "3.5",
     },
     nocompress_extensions = [
         ".so",

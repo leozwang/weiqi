@@ -1,6 +1,5 @@
 #ifdef USE_OPENCL_BACKEND
 
-#include <jni.h>
 #include "../neuralnet/nninterface.h"
 #include "../neuralnet/openclincludes.h"
 
@@ -2954,100 +2953,6 @@ void NeuralNet::freeInputBuffers(InputBuffers* inputBuffers) {
   delete inputBuffers;
 }
 
-extern "C" {
-  extern bool g_useTpuEvaluator;
-  extern jobject g_tpuEvaluatorObj;
-  extern jmethodID g_evaluateMethodID;
-  extern JavaVM* g_jvm;
-}
-
-#include <android/log.h>
-
-void evaluateBoardOnTpu(
-    int batchSize, int nnXLen, int nnYLen,
-    InputBuffers* inputBuffers, NNResultBuf** inputBufs,
-    std::vector<NNOutput*>& outputs
-) {
-    if (!::g_useTpuEvaluator || !::g_tpuEvaluatorObj || !::g_evaluateMethodID || !::g_jvm) return;
-
-    JNIEnv* env = nullptr;
-    bool didAttach = false;
-    if (::g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        ::g_jvm->AttachCurrentThread(&env, nullptr);
-        didAttach = true;
-    }
-    if (!env) return;
-
-    static int evalCount = 0;
-    evalCount++;
-    if (evalCount % 10 == 1) {
-        __android_log_print(ANDROID_LOG_INFO, "KataGoBridge", "Evaluating board batch size %d on Edge TPU (count: %d)...", batchSize, evalCount);
-    }
-
-
-
-    for (int row = 0; row < batchSize; row++) {
-        float* rowSpatialInput = inputBuffers->userInputBuffer + (inputBuffers->singleInputElts * row);
-        float* rowGlobalInput = inputBuffers->userInputGlobalBuffer + (inputBuffers->singleInputGlobalElts * row);
-
-        jfloatArray jSpatial = env->NewFloatArray(19 * 19 * 22);
-        jfloatArray jGlobal = env->NewFloatArray(19);
-        jfloatArray jPolicy = env->NewFloatArray(362);
-        jfloatArray jValue = env->NewFloatArray(7);
-        jfloatArray jOwnership = env->NewFloatArray(361);
-
-        env->SetFloatArrayRegion(jSpatial, 0, 19 * 19 * 22, rowSpatialInput);
-        env->SetFloatArrayRegion(jGlobal, 0, 19, rowGlobalInput);
-
-        jboolean ok = env->CallBooleanMethod(g_tpuEvaluatorObj, g_evaluateMethodID, jSpatial, jGlobal, jPolicy, jValue, jOwnership);
-
-        if (ok) {
-            NNOutput* output = outputs[row];
-
-            // 1. Policy (361 spatial + 1 pass logit) with symmetry
-            float rawPolicy[362];
-            env->GetFloatArrayRegion(jPolicy, 0, 362, rawPolicy);
-            SymmetryHelpers::copyOutputsWithSymmetry(rawPolicy, output->policyProbs, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
-            output->policyProbs[nnXLen * nnYLen] = rawPolicy[361];
-
-            // 2. Value (3 channels) & Score (4 channels) outputs from trained TPU model
-            float valueBuf[7];
-            env->GetFloatArrayRegion(jValue, 0, 7, valueBuf);
-            output->whiteWinProb = valueBuf[0];
-            output->whiteLossProb = valueBuf[1];
-            output->whiteNoResultProb = valueBuf[2];
-            output->whiteScoreMean = valueBuf[3];
-            output->whiteScoreMeanSq = valueBuf[4];
-            output->whiteLead = valueBuf[5];
-            output->varTimeLeft = valueBuf[6];
-            output->shorttermWinlossError = 0.0f;
-            output->shorttermScoreError = 0.0f;
-
-
-
-            // 3. Ownership map with symmetry
-            if (output->whiteOwnerMap != nullptr) {
-                float rawOwnership[361];
-                env->GetFloatArrayRegion(jOwnership, 0, 361, rawOwnership);
-                SymmetryHelpers::copyOutputsWithSymmetry(rawOwnership, output->whiteOwnerMap, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
-            }
-        }
-
-
-        env->DeleteLocalRef(jSpatial);
-        env->DeleteLocalRef(jGlobal);
-        env->DeleteLocalRef(jPolicy);
-        env->DeleteLocalRef(jValue);
-        env->DeleteLocalRef(jOwnership);
-    }
-
-    if (didAttach) {
-        ::g_jvm->DetachCurrentThread();
-    }
-}
-
-
-
 void NeuralNet::getOutput(
   ComputeHandle* gpuHandle,
   InputBuffers* inputBuffers,
@@ -3090,13 +2995,6 @@ void NeuralNet::getOutput(
     }
     SymmetryHelpers::copyInputsWithSymmetry(rowSpatial, rowSpatialInput, 1, nnYLen, nnXLen, numSpatialFeatures, gpuHandle->inputsUseNHWC, inputBufs[nIdx]->symmetry);
   }
-
-  if (::g_useTpuEvaluator) {
-    evaluateBoardOnTpu(batchSize, nnXLen, nnYLen, inputBuffers, inputBufs, outputs);
-    return;
-  }
-
-
 
   Buffers* buffers = gpuHandle->buffers.get();
 

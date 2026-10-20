@@ -11,6 +11,6 @@ if [ -z "$keystore" ]; then
   keystore="weiqi/src/keystore/release.keystore"
 fi
 
-$zipalign -p -f -v 16384 $unsigned_apk $output_apk
+$zipalign -P 16 -f -v 4 $unsigned_apk $output_apk
 
 $apksigner sign --ks "$keystore" --ks-key-alias weiqi-release --ks-pass pass:new_password --key-pass pass:new_password "$output_apk"
