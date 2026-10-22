@@ -349,6 +349,28 @@ vector<DeviceInfo> DeviceInfo::getAllDeviceInfosOnSystem(Logger* logger) {
     err = clGetDeviceIDs(
       platformId, CL_DEVICE_TYPE_CPU | CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_ACCELERATOR, (cl_uint)(deviceIds.size() - numDevicesTotal),
       deviceIds.data() + numDevicesTotal, &numDevices);
+    //Some drivers (e.g. Qualcomm Adreno 840, driver 0842.x) reject any combined device_type bitmask with
+    //CL_INVALID_DEVICE_TYPE even though device_type is a bitfield, while single types work. Query each type separately.
+    if(err == CL_INVALID_DEVICE_TYPE) {
+      numDevices = 0;
+      err = CL_DEVICE_NOT_FOUND;
+      const cl_device_type singleTypes[] = {CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_CPU, CL_DEVICE_TYPE_ACCELERATOR};
+      for(cl_device_type singleType : singleTypes) {
+        size_t capacity = deviceIds.size() - numDevicesTotal - numDevices;
+        if(capacity == 0)
+          break;
+        cl_uint numOfType = 0;
+        cl_int typeErr = clGetDeviceIDs(
+          platformId, singleType, (cl_uint)capacity, deviceIds.data() + numDevicesTotal + numDevices, &numOfType);
+        if(typeErr == CL_DEVICE_NOT_FOUND || typeErr == CL_INVALID_DEVICE_TYPE)
+          continue;
+        CHECK_ERR(typeErr);
+        if(numOfType > capacity)
+          throw StringError("OpenCL: more devices found than expected maximum (" + Global::uint64ToString(deviceIds.size()) + ")");
+        numDevices += numOfType;
+        err = CL_SUCCESS;
+      }
+    }
     //Allow there to be 0 devices on this platform, just move on to the next
     if(err == CL_DEVICE_NOT_FOUND) {
       if(logger != NULL)
