@@ -1,3 +1,7 @@
+# apple_support must stay above rules_cc: Bazel picks the first registered C++
+# toolchain, and rules_cc's generic one rejects Xcode's SDKSettings.json
+# dependency ("absolute path inclusion(s) found") when compiling host tools.
+bazel_dep(name = "apple_support", version = "1.24.2")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "protobuf", version = "33.4")
 bazel_dep(name = "rules_android", version = "0.7.1")
