@@ -1219,9 +1219,12 @@ class GameFragment : Fragment() {
                   ),
                   modifier = Modifier.size(80.dp),
                   shape = CircleShape,
+                  // The default 16dp side padding leaves only 48dp for the label in an 80dp circle,
+                  // which wrapped "PLACE" mid-word. Use nearly the full width and keep it on one line.
+                  contentPadding = PaddingValues(horizontal = 4.dp),
                   elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
                 ) {
-                  Text(context.getString(R.string.btn_place), fontWeight = FontWeight.Bold)
+                  Text(context.getString(R.string.btn_place), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
               }
             }
