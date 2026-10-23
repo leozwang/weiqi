@@ -1187,6 +1187,23 @@ static void tuneXGemmDirect(
   tunedConfig = currentConfig;
 }
 
+// Never run the xGemm kernels with single-thread work groups (MDIMC*NDIMC == 1, which is KataGo's untuned
+// default and was used as the tuning reference). On a Samsung Galaxy Z Flip 8 (Qualcomm Adreno 840, driver
+// 0842.19.11), running that variant made the GPU write to stray addresses across the app's GPU memory
+// (detected with guard bytes around every tuner buffer), visibly corrupting the app's own UI during tuning.
+// The 8x8-thread variant with the same tile sizes is used instead.
+static bool isSingleThreadXGemm(const OpenCLParams::XGemmParams& p) {
+  return p.MDIMC * p.NDIMC <= 1;
+}
+static void avoidSingleThreadXGemm(OpenCLParams::XGemmParams& p) {
+  if(!isSingleThreadXGemm(p))
+    return;
+  p.MWG = 8; p.NWG = 8; p.KWG = 8;
+  p.MDIMC = 8; p.NDIMC = 8; p.MDIMA = 8; p.NDIMB = 8;
+  p.KWI = 1; p.VWM = 1; p.VWN = 1;
+  p.STRM = 0; p.STRN = 0; p.SA = 0; p.SB = 0;
+}
+
 static bool tuneXGemm(
   OpenCLTuneParams currentConfig,
   const OpenCLTuneParams& untunedConfig,
@@ -1210,6 +1227,8 @@ static bool tuneXGemm(
     out << "Tuning xGemm for convolutions - trying with FP16 storage" << endl;
   else
     out << "Tuning xGemm for convolutions" << endl;
+
+  avoidSingleThreadXGemm(currentConfig.xGemm);
 
   vector<OpenCLTuneParams> configs;
   configs.push_back(currentConfig);
@@ -1266,6 +1285,7 @@ static bool tuneXGemm(
   referenceConfig.xGemm.STRN = untunedConfig.xGemm.STRN;
   referenceConfig.xGemm.SA = untunedConfig.xGemm.SA;
   referenceConfig.xGemm.SB = untunedConfig.xGemm.SB;
+  avoidSingleThreadXGemm(referenceConfig.xGemm);
 
   OpenCLTuneParams slightlyTunedConfig = referenceConfig;
   slightlyTunedConfig.xGemm.MDIMC = 8;
@@ -1280,6 +1300,7 @@ static bool tuneXGemm(
   configs.insert(configs.begin(),slightlyTunedConfig2);
   configs.insert(configs.begin(),slightlyTunedConfig);
   configs.insert(configs.begin(),currentConfig);
+  filterConfigs(configs,[](const OpenCLTuneParams& p) { return !isSingleThreadXGemm(p.xGemm); });
 
   auto getDesc = [](const OpenCLTuneParams& cfg) { return cfg.xGemm.desc(); };
 
@@ -1453,6 +1474,8 @@ static bool tuneXGemm16(
   out << "------------------------------------------------------" << endl;
   out << "Tuning xGemm16 for convolutions" << endl;
 
+  avoidSingleThreadXGemm(currentConfig.xGemm16);
+
   vector<OpenCLTuneParams> configs;
   configs.push_back(currentConfig);
   if(full) {
@@ -1508,6 +1531,7 @@ static bool tuneXGemm16(
   referenceConfig.xGemm16.STRN = untunedConfig.xGemm16.STRN;
   referenceConfig.xGemm16.SA = untunedConfig.xGemm16.SA;
   referenceConfig.xGemm16.SB = untunedConfig.xGemm16.SB;
+  avoidSingleThreadXGemm(referenceConfig.xGemm16);
 
   OpenCLTuneParams slightlyTunedConfig = referenceConfig;
   slightlyTunedConfig.xGemm16.MDIMC = 8;
@@ -1522,6 +1546,7 @@ static bool tuneXGemm16(
   configs.insert(configs.begin(),slightlyTunedConfig2);
   configs.insert(configs.begin(),slightlyTunedConfig);
   configs.insert(configs.begin(),currentConfig);
+  filterConfigs(configs,[](const OpenCLTuneParams& p) { return !isSingleThreadXGemm(p.xGemm16); });
 
   auto getDesc = [](const OpenCLTuneParams& cfg) { return cfg.xGemm16.desc(); };
 
