@@ -21,7 +21,7 @@
     <string name="section_ai_engine">AI 引擎</string>
     <string name="section_handicap">让子数</string>
     <string name="section_ai_strength">难度</string>
-    <string name="section_play_as">对局</string>
+    <string name="section_play_as">玩家持子</string>
     
     <!-- Details settings -->
     <string name="engine_mobile_title">移动版 (10b)</string>
@@ -58,6 +58,35 @@
     <!-- IAP promo strings -->
     <string name="iap_promo_title">解锁高级AI功能</string>
     <string name="iap_promo_desc">一次性购买即可永久解锁高级和职业级难度。</string>
-    <string name="msg_ai_passed">AI 弃子</string>
-</resources>
+    <string name="msg_ai_passed">AI 停一手</string>
 
+    <!-- Dialog Actions -->
+    <string name="btn_cancel">取消</string>
+    <string name="btn_start">开始</string>
+
+    <!-- Moves, game end and messages -->
+    <string name="color_black">黑棋</string>
+    <string name="color_white">白棋</string>
+    <string name="last_move_none">尚未落子</string>
+    <string name="last_move_played">%1$s落子 %2$s</string>
+    <string name="last_move_ai_played">%1$s（AI）落子 %2$s</string>
+    <string name="last_move_passed">%1$s停一手</string>
+    <string name="last_move_ai_passed">%1$s（AI）停一手</string>
+    <string name="last_move_undone">已悔棋，上一手：%1$s</string>
+    <string name="last_move_undone_start">已悔棋至开局</string>
+    <string name="last_move_redone">重做：%1$s</string>
+    <string name="resign_result">%1$s中盘胜</string>
+    <string name="game_over">棋局结束</string>
+    <string name="game_concluded">对局已结束。</string>
+    <string name="btn_back_to_board">返回棋盘</string>
+    <string name="result_format">结果：%1$s</string>
+    <string name="counting_score">正在计算结果…</string>
+    <string name="msg_illegal_move">此处不能落子</string>
+    <string name="analysis_summary">黑棋 %1$d%% %2$s目</string>
+    <string name="handicap_footer_user_black">你执黑并获得让子，AI（白）先行。</string>
+    <string name="handicap_footer_user_white">AI 执黑并获得让子，你（白）先行。</string>
+    <string name="handicap_footer_black">黑方获得让子，白方先行。</string>
+    <string name="label_active_backend">当前后端：</string>
+    <string name="label_latest_latency">最近一次调用延迟：%1$s</string>
+    <string name="preparing_engine">正在准备 AI 引擎...</string>
+</resources>

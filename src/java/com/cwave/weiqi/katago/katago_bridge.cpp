@@ -11,6 +11,8 @@
 #include <android/log.h>
 #include <sys/stat.h>
 #include <fstream>
+#include <chrono>
+#include <cmath>
 
 // KataGo includes
 #include "core/global.h"
@@ -69,6 +71,298 @@ namespace {
         std::string item;
         while (ss >> item) result.push_back(item);
         return result;
+    }
+
+    // Parses a GTP color argument ("b", "black", "w", "white"; any case).
+    bool parsePlayer(const std::string& s, Player& pla) {
+        const std::string lower = Global::toLower(s);
+        if (lower == "b" || lower == "black") { pla = P_BLACK; return true; }
+        if (lower == "w" || lower == "white") { pla = P_WHITE; return true; }
+        return false;
+    }
+
+    const char* colorName(Player pla) { return pla == P_BLACK ? "black" : "white"; }
+
+    // Moves must strictly alternate. AsyncBot/Search silently wipe the game record when asked
+    // to move or search for the side that is not to play, which breaks undo and ko tracking.
+    std::string notYourTurn(Player pla) {
+        LOGE("Refused: not %s's turn", colorName(pla));
+        return std::string("? not ") + colorName(pla) + "'s turn";
+    }
+
+    // Executes one GTP command. The caller holds engineMutex and the engine is initialized.
+    // The engine-side behavior matches the iOS app's bridge (weiqi-ios Weiqi/KataGoBridge.cpp).
+    std::string runCommand(const std::string& command) {
+        std::vector<std::string> parts = split(command);
+        if (parts.empty()) return "= ";
+        const std::string mainCmd = parts[0];
+
+        if (mainCmd == "name") return "= KataGo";
+        if (mainCmd == "version") return "= " + Version::getKataGoVersion();
+        if (mainCmd == "protocol_version") return "= 2";
+
+        if (mainCmd == "komi") {
+            if (parts.size() < 2) return "? missing value";
+            float k = 7.5f;
+            try { k = std::stof(parts[1]); } catch (...) { return "? invalid value"; }
+            bot->setKomiIfNew(k);
+            LOGI("Komi updated to %.1f", k);
+            return "= ";
+        }
+
+        if (mainCmd == "get_komi") {
+            return "= " + Global::strprintf("%.1f", bot->getRootHist().rules.komi);
+        }
+
+        // Read-only view of the search limits (lets tests check the difficulty levels).
+        if (mainCmd == "kata-get-param") {
+            if (parts.size() < 2) return "? missing parameter";
+            const SearchParams& params = bot->getParams();
+            if (parts[1] == "maxVisits") return "= " + std::to_string(params.maxVisits);
+            if (parts[1] == "maxPlayouts") return "= " + std::to_string(params.maxPlayouts);
+            if (parts[1] == "numSearchThreads") return "= " + std::to_string(params.numThreads);
+            return "? unknown parameter";
+        }
+
+        if (mainCmd == "boardsize") {
+            if (parts.size() < 2) return "? missing size";
+            int s = 19;
+            try { s = std::stoi(parts[1]); } catch (...) { return "? invalid size"; }
+            if (s < 7 || s > 19) return "? unsupported size";
+            Board board(s, s);
+            BoardHistory hist(board, P_BLACK, bot->getRootHist().rules, 0);
+            bot->setPosition(P_BLACK, board, hist);
+            LOGI("Board size changed to %dx%d", s, s);
+            return "= ";
+        }
+
+        if (mainCmd == "set_max_visits") {
+            if (parts.size() < 2) return "? missing visits";
+            int64_t v = 400;
+            try { v = std::stoll(parts[1]); } catch (...) { return "? invalid visits"; }
+            SearchParams params = bot->getParams();
+            params.maxVisits = v;
+            params.maxPlayouts = v;
+            bot->setParams(params);
+            LOGI("AI max visits updated to %ld", (long)v);
+            return "= ";
+        }
+
+        if (mainCmd == "genmove") {
+            Player pla;
+            if (parts.size() < 2 || !parsePlayer(parts[1], pla)) return "? missing or invalid color";
+            if (pla != bot->getRootPla()) return notYourTurn(pla);
+
+            LOGI("Starting AI search (genmove) for %s...", colorName(pla));
+            auto startTime = std::chrono::steady_clock::now();
+            Loc moveLoc = bot->genMoveSynchronous(pla, TimeControls());
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startTime).count();
+            const long long rootVisits = (long long)bot->getSearch()->getRootVisits();
+
+            std::string moveStr = Location::toString(moveLoc, bot->getRootBoard());
+            bot->makeMove(moveLoc, pla);
+            // The tree is now re-rooted at the chosen move: these are the visits KataGo spent on the
+            // move it played, which never exceed the search budget (Easy 100 ... Pro 2500).
+            const long long moveVisits = (long long)bot->getSearch()->getRootVisits();
+            LOGI("AI search completed in %lld ms. Move: %s, visits: %lld, root visits: %lld",
+                 (long long)duration, moveStr.c_str(), moveVisits, rootVisits);
+            return "= " + moveStr;
+        }
+
+        if (mainCmd == "think") {
+            Player pla;
+            if (parts.size() < 2 || !parsePlayer(parts[1], pla)) return "? missing or invalid color";
+            if (pla != bot->getRootPla()) return notYourTurn(pla);
+            int64_t visits = 400;
+            if (parts.size() >= 3) {
+                try { visits = std::stoll(parts[2]); } catch (...) { return "? invalid visits"; }
+            }
+            LOGI("AI think: color=%s, visits=%ld", colorName(pla), (long)visits);
+            SearchParams oldParams = bot->getParams();
+            SearchParams newParams = oldParams;
+            newParams.maxVisits = visits;
+            newParams.maxPlayouts = visits;
+            // setParamsNoClearing keeps the search tree before and after this search.
+            bot->setParamsNoClearing(newParams);
+            bot->genMoveSynchronous(pla, TimeControls());
+            bot->setParamsNoClearing(oldParams);
+            return "= ";
+        }
+
+        if (mainCmd == "play") {
+            Player pla;
+            if (parts.size() < 3 || !parsePlayer(parts[1], pla)) return "? missing color or move";
+            const std::string& moveStr = parts[2];
+            LOGI("AI play: color=%d, move=%s, rootPla=%d", (int)pla, moveStr.c_str(), (int)bot->getRootPla());
+            if (pla != bot->getRootPla()) return notYourTurn(pla);
+            Loc moveLoc;
+            if (!Location::tryOfString(moveStr, bot->getRootBoard(), moveLoc)) return "? invalid move";
+            // makeMove() alone is "tolerant": it skips the ko check and accepts multi-stone suicide
+            // whatever the rules say. Validate against the configured rules first.
+            if (!bot->isLegalStrict(moveLoc, pla) || !bot->makeMove(moveLoc, pla)) {
+                LOGE("AI play refused: illegal move %s", moveStr.c_str());
+                return "? illegal move";
+            }
+            return "= ";
+        }
+
+        if (mainCmd == "undo") {
+            const BoardHistory& hist = bot->getRootHist();
+            if (hist.moveHistory.empty()) return "? cannot undo";
+            // Replay all but the last move from the initial position (which holds any handicap
+            // stones, so undo never removes them).
+            Board board = hist.initialBoard;
+            BoardHistory newHist(board, hist.initialPla, hist.rules, hist.initialEncorePhase);
+            newHist.setAssumeMultipleStartingBlackMovesAreHandicap(hist.assumeMultipleStartingBlackMovesAreHandicap);
+            newHist.setInitialTurnNumber(hist.initialTurnNumber);
+            for (size_t i = 0; i + 1 < hist.moveHistory.size(); i++) {
+                newHist.makeBoardMoveAssumeLegal(board, hist.moveHistory[i].loc, hist.moveHistory[i].pla, nullptr);
+            }
+            bot->setPosition(newHist.presumedNextMovePla, board, newHist);
+            return "= ";
+        }
+
+        if (mainCmd == "clear_board") {
+            Board board(bot->getRootBoard().x_size, bot->getRootBoard().y_size);
+            BoardHistory hist(board, P_BLACK, bot->getRootHist().rules, 0);
+            bot->setPosition(P_BLACK, board, hist);
+            LOGI("AI clear_board: board reset to %dx%d, black to move", board.x_size, board.y_size);
+            return "= ";
+        }
+
+        // Places 1-9 Black handicap stones on the star points; White moves next.
+        if (mainCmd == "fixed_handicap") {
+            if (parts.size() < 2) return "? missing count";
+            int n = 0;
+            try { n = std::stoi(parts[1]); } catch (...) { return "? invalid count"; }
+            if (n < 1 || n > 9) return "? invalid count";
+            const Rules rules = bot->getRootHist().rules;
+            Board board(bot->getRootBoard().x_size, bot->getRootBoard().y_size);
+            if (n == 1) {
+                // KataGo has no 1-stone layout: use the upper-right star point (Q16 on 19x19), the
+                // first stone of its 2-stone layout.
+                int x = (board.x_size <= 12) ? board.x_size - 3 : board.x_size - 4;
+                int y = (board.y_size <= 12) ? 2 : 3;
+                board.setStone(Location::getLoc(x, y, board.x_size), P_BLACK);
+            } else {
+                try {
+                    PlayUtils::placeFixedHandicap(board, n);
+                } catch (const std::exception& e) {
+                    return "? " + std::string(e.what());
+                }
+            }
+            BoardHistory hist(board, P_WHITE, rules, 0);
+            hist.setAssumeMultipleStartingBlackMovesAreHandicap(true);
+            hist.setInitialTurnNumber(board.numStonesOnBoard());
+            bot->setPosition(P_WHITE, board, hist);
+
+            std::string stones;
+            for (int y = 0; y < board.y_size; y++) {
+                for (int x = 0; x < board.x_size; x++) {
+                    Loc loc = Location::getLoc(x, y, board.x_size);
+                    if (board.colors[loc] == P_BLACK) stones += Location::toString(loc, board) + " ";
+                }
+            }
+            LOGI("AI fixed_handicap %d: %s", n, stones.c_str());
+            return "= " + stones;
+        }
+
+        // "= <361 cells> <black's captures> <white's captures> <side to move B|W>"
+        if (mainCmd == "get_board") {
+            const Board& b = bot->getRootBoard();
+            std::string resp = "= ";
+            for (int y = 0; y < b.y_size; y++) {
+                for (int x = 0; x < b.x_size; x++) {
+                    Player color = b.colors[Location::getLoc(x, y, b.x_size)];
+                    resp += (color == P_BLACK) ? "1" : (color == P_WHITE) ? "2" : "0";
+                }
+            }
+            resp += " " + std::to_string(b.numWhiteCaptures) + " " + std::to_string(b.numBlackCaptures);
+            resp += bot->getRootPla() == P_WHITE ? " W" : " B";
+            return resp;
+        }
+
+        if (mainCmd == "final_score") {
+            bot->stopAndWait();
+            // computeLead re-roots the search at several probe komi values, so snapshot the real
+            // game state and restore it afterwards (as KataGo's own GTP engine does). Otherwise the
+            // game would continue with a wrong komi after an undo at game over.
+            const SearchParams oldParams = bot->getParams();
+            const Player oldPla = bot->getRootPla();
+            const Board oldBoard = bot->getRootBoard();
+            const BoardHistory oldHist = bot->getRootHist();
+
+            SearchParams scoringParams = oldParams;
+            scoringParams.playoutDoublingAdvantage = 0.0;
+            scoringParams.conservativePass = true;
+            bot->setParams(scoringParams);
+
+            Board board = oldBoard;
+            BoardHistory hist = oldHist;
+            // Lead from White's perspective (White points - Black points), judged with 500 visits so
+            // dead stones and unfinished borders count the way a person would count them.
+            const double rawLead = PlayUtils::computeLead(
+                bot->getSearchStopAndWait(), NULL, board, hist, oldPla, 500, OtherGameProperties());
+            // Round to a result the rules can actually produce (x.5 with a half-point komi).
+            double lead = rawLead;
+            if (hist.rules.gameResultWillBeInteger()) lead = std::round(lead);
+            else lead = std::round(lead + 0.5) - 0.5;
+
+            bot->setPosition(oldPla, oldBoard, oldHist);
+            bot->setParams(oldParams);
+
+            std::string result;
+            if (lead == 0) result = "0";
+            else if (lead < 0) result = "B+" + Global::strprintf("%.1f", -lead);
+            else result = "W+" + Global::strprintf("%.1f", lead);
+            LOGI("Final score %s (lead W-B %.2f), komi after scoring %.1f",
+                 result.c_str(), rawLead, bot->getRootHist().rules.komi);
+            return "= " + result;
+        }
+
+        if (mainCmd == "kata-get-analysis") {
+            nlohmann::json json;
+            // Always from Black's perspective, so the UI consistently shows Black's winrate and lead.
+            Player perspective = P_BLACK;
+            int64_t analysisVisits = 40;
+            if (parts.size() >= 3) {
+                try { analysisVisits = std::stoll(parts[2]); } catch (...) {}
+            }
+
+            Player rootPla = bot->getRootPla();
+            LOGI("AI kata-get-analysis: perspective=%d, root=%d, visits=%ld", (int)perspective, (int)rootPla, (long)analysisVisits);
+
+            Search* search = bot->getSearchStopAndWait();
+            if (search->getRootNode() == nullptr || search->getRootVisits() < analysisVisits) {
+                SearchParams oldP = bot->getParams();
+                SearchParams newP = oldP;
+                newP.maxVisits = analysisVisits;
+                newP.maxPlayouts = analysisVisits;
+                bot->setParamsNoClearing(newP);
+                search->runWholeSearch(rootPla);
+                bot->setParamsNoClearing(oldP);
+            }
+
+            bool success = search->getAnalysisJson(
+                perspective,
+                10,    // analysisPVLen
+                false, // preventEncore
+                true,  // includePolicy
+                true,  // includeOwnership
+                false, // includeOwnershipStdev
+                false, // includeMovesOwnership
+                false, // includeMovesOwnershipStdev
+                true,  // includePVVisits
+                false, // includeNoResultValue
+                json
+            );
+            if (!success) return "? failed to get analysis";
+            return "= " + json.dump();
+        }
+
+        LOGE("Unknown GTP command: %s", mainCmd.c_str());
+        return "? unknown command " + mainCmd;
     }
 }
 #include <pthread.h>
@@ -222,284 +516,18 @@ Java_com_cwave_weiqi_katago_KataGoBridge_sendGtpCommand(JNIEnv* env, jobject thi
     std::string cmd(cCommand);
     env->ReleaseStringUTFChars(command, cCommand);
 
-    std::vector<std::string> parts = split(cmd);
-    if (parts.empty()) return env->NewStringUTF("= ");
-
-    std::string mainCmd = parts[0];
-
-    if (mainCmd == "name") return env->NewStringUTF("= KataGo");
-    if (mainCmd == "version") return env->NewStringUTF(Version::getKataGoVersion().c_str());
-    if (mainCmd == "protocol_version") return env->NewStringUTF("= 2");
-
-    if (mainCmd == "komi") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing value");
-        float k = 7.5f;
-        try {
-            k = std::stof(parts[1]);
-        } catch (...) {
-            return env->NewStringUTF("? invalid value");
-        }
-        bot->setKomiIfNew(k);
-        LOGI("Komi updated to %.1f", k);
-        return env->NewStringUTF("= ");
+    // Never let an engine exception escape into the JVM (it would abort the app).
+    std::string resp;
+    try {
+        resp = runCommand(cmd);
+    } catch (const std::exception& e) {
+        LOGE("GTP command '%s' failed: %s", cmd.c_str(), e.what());
+        resp = "? " + std::string(e.what());
+    } catch (...) {
+        LOGE("GTP command '%s' failed with an unknown exception", cmd.c_str());
+        resp = "? internal error";
     }
-
-    if (mainCmd == "boardsize") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing size");
-        int s = 19;
-        try {
-            s = std::stoi(parts[1]);
-        } catch (...) {
-            return env->NewStringUTF("? invalid size");
-        }
-        if (s < 7 || s > 19) return env->NewStringUTF("? unsupported size");
-
-        Rules rules = bot->getRootHist().rules;
-        Board board(s, s);
-        Player pla = P_BLACK;
-        BoardHistory hist(board, pla, rules, 0);
-        bot->setPosition(pla, board, hist);
-        LOGI("Board size changed to %dx%d", s, s);
-        return env->NewStringUTF("= ");
-    }
-
-    if (mainCmd == "genmove") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing color");
-        std::string colorStr = parts[1];
-        Player pla;
-        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
-        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
-        else return env->NewStringUTF("? invalid color");
-
-        LOGI("Starting AI search (genmove) for %s...", colorStr.c_str());
-        auto startTime = std::chrono::steady_clock::now();
-        
-        TimeControls tc;
-        Loc moveLoc = bot->genMoveSynchronous(pla, tc);
-
-
-
-
-        
-        auto endTime = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-        
-        std::string moveStr = Location::toString(moveLoc, bot->getRootBoard());
-        LOGI("AI search completed in %lld ms. Move: %s", duration, moveStr.c_str());
-
-        bot->makeMove(moveLoc, pla);
-        return env->NewStringUTF(("= " + moveStr).c_str());
-    }
-
-    if (mainCmd == "set_max_visits") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing visits");
-        int64_t v = 400;
-        try {
-            v = std::stoll(parts[1]);
-        } catch (...) {
-            return env->NewStringUTF("? invalid visits");
-        }
-        SearchParams params = bot->getParams();
-        params.maxVisits = v;
-        params.maxPlayouts = v;
-        bot->setParams(params);
-        LOGI("AI max visits updated to %ld", (long)v);
-        return env->NewStringUTF("= ok");
-    }
-
-    if (mainCmd == "think") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing color");
-        std::string colorStr = parts[1];
-        Player pla;
-        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
-        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
-        else return env->NewStringUTF("? invalid color");
-
-        int64_t visits = 400;
-        if (parts.size() >= 3) {
-            try {
-                visits = std::stoll(parts[2]);
-            } catch (...) {}
-        }
-
-        Player rootPla = bot->getRootPla();
-        LOGI("AI think: requested=%d, root=%d, visits=%ld", (int)pla, (int)rootPla, (long)visits);
-        
-        SearchParams oldParams = bot->getParams();
-        SearchParams newParams = oldParams;
-        newParams.maxVisits = visits;
-        newParams.maxPlayouts = visits;
-        
-        // Use setParamsNoClearing to avoid wiping the tree before/after search
-        bot->setParamsNoClearing(newParams);
-        bot->genMoveSynchronous(pla, TimeControls());
-        bot->setParamsNoClearing(oldParams);
-        
-        LOGI("AI thinking search completed.");
-        return env->NewStringUTF("= ");
-    }
-
-    if (mainCmd == "play") {
-        if (parts.size() < 3) return env->NewStringUTF("? missing color or move");
-        std::string colorStr = parts[1];
-        std::string moveStr = parts[2];
-        Player pla;
-        if (colorStr == "black" || colorStr == "b" || colorStr == "B") pla = P_BLACK;
-        else if (colorStr == "white" || colorStr == "w" || colorStr == "W") pla = P_WHITE;
-        else return env->NewStringUTF("? invalid color");
-
-        Loc moveLoc = Location::ofString(moveStr, bot->getRootBoard());
-        if (moveLoc == Board::NULL_LOC && moveStr != "pass" && moveStr != "PASS") return env->NewStringUTF("? invalid move");
-
-        Player rootPla = bot->getRootPla();
-        LOGI("AI play: color=%d, move=%s, rootPla=%d", (int)pla, moveStr.c_str(), (int)rootPla);
-
-        if (!bot->makeMove(moveLoc, pla)) {
-            LOGE("AI play failed! illegal move or turn mismatch");
-            return env->NewStringUTF("? illegal move");
-        }
-        return env->NewStringUTF("= ");
-    }
-
-    if (mainCmd == "clear_board") {
-        Rules rules = bot->getRootHist().rules;
-        int xSize = bot->getRootBoard().x_size;
-        int ySize = bot->getRootBoard().y_size;
-        Board board(xSize, ySize);
-        Player pla = P_BLACK;
-        BoardHistory hist(board, pla, rules, 0);
-        bot->setPosition(pla, board, hist);
-        LOGI("AI clear_board: board reset to 19x19, black to move");
-        return env->NewStringUTF("= ");
-    }
-
-    if (mainCmd == "fixed_handicap") {
-        if (parts.size() < 2) return env->NewStringUTF("? missing count");
-        int n = 0;
-        try {
-            n = std::stoi(parts[1]);
-        } catch (...) {
-            return env->NewStringUTF("? invalid count");
-        }
-        if (n < 2 || n > 9) return env->NewStringUTF("? handicap must be 2-9");
-
-        Board board = bot->getRootBoard();
-        // Clear board first to ensure standard handicap placement
-        board = Board(board.x_size, board.y_size);
-
-        try {
-            PlayUtils::placeFixedHandicap(board, n);
-        } catch (const std::exception& e) {
-            return env->NewStringUTF(("? " + std::string(e.what())).c_str());
-        }
-
-        Player pla = P_WHITE; 
-        BoardHistory hist(board, pla, bot->getRootHist().rules, 0);
-        bot->setPosition(pla, board, hist);
-
-        std::string resp = "= ";
-        for (int y = 0; y < board.y_size; y++) {
-            for (int x = 0; x < board.x_size; x++) {
-                if (board.colors[Location::getLoc(x, y, board.x_size)] == P_BLACK) {
-                    resp += Location::toString(Location::getLoc(x, y, board.x_size), board) + " ";
-                }
-            }
-        }
-        return env->NewStringUTF(resp.c_str());
-    }
-
-    if (mainCmd == "undo") {
-        const BoardHistory& hist = bot->getRootHist();
-        if (hist.moveHistory.size() == 0) return env->NewStringUTF("? cannot undo");
-
-        Board board = hist.initialBoard;
-        Player pla = hist.initialPla;
-        Rules rules = hist.rules;
-        BoardHistory newHist(board, pla, rules, hist.initialEncorePhase);
-
-        for (size_t i = 0; i < (int)hist.moveHistory.size() - 1; i++) {
-            newHist.makeBoardMoveAssumeLegal(board, hist.moveHistory[i].loc, hist.moveHistory[i].pla, nullptr);
-        }
-        bot->setPosition(newHist.presumedNextMovePla, board, newHist);
-        return env->NewStringUTF("= ");
-    }
-
-    if (mainCmd == "final_score") {
-        bot->stopAndWait();
-        const BoardHistory& rootHist = bot->getRootHist();
-        
-        LOGI("Calculating final score with computeLead...");
-        // Use computeLead even if game is finished to account for dead stones and unfilled dame.
-        // It provides a much more human-expected "judged" score.
-        BoardHistory histCopy = rootHist;
-        // In KataGo, PlayUtils::computeLead(...) returns lead from WHITE's perspective (White points - Black points).
-        float score = PlayUtils::computeLead(
-            bot->getSearchStopAndWait(),
-            NULL,
-            bot->getRootBoard(),
-            histCopy,
-            bot->getRootPla(),
-            500,     // 500 visits for a reliable estimate
-            OtherGameProperties()
-        );
-        
-        LOGI("Final score lead (W-B): %.1f", score);
-        Player winner = score > 0 ? P_WHITE : (score < 0 ? P_BLACK : C_EMPTY);
-
-        std::string resp = "= ";
-        if (winner == C_EMPTY) resp += "0";
-        else if (winner == P_WHITE) resp += "W+" + Global::strprintf("%.1f", score);
-        else if (winner == P_BLACK) resp += "B+" + Global::strprintf("%.1f", -score);
-        return env->NewStringUTF(resp.c_str());
-    }
-
-    if (mainCmd == "kata-get-analysis") {
-        nlohmann::json json;
-        // perspective: P_BLACK is usually 1, P_WHITE is 2 in KataGo
-        Player perspective = P_BLACK; // Always get from Black's perspective for consistency in bridge
-        int64_t analysisVisits = 40;
-        if (parts.size() >= 3) {
-            try {
-                analysisVisits = std::stoll(parts[2]);
-            } catch (...) {}
-        }
-
-        Player rootPla = bot->getRootPla();
-        LOGI("AI kata-get-analysis: perspective=%d, root=%d, visits=%ld", (int)perspective, (int)rootPla, (long)analysisVisits);
-
-        Search* search = bot->getSearchStopAndWait();
-        if (search->getRootNode() == nullptr || search->getRootVisits() < analysisVisits) {
-            SearchParams oldP = bot->getParams();
-            SearchParams newP = oldP;
-            newP.maxVisits = analysisVisits;
-            newP.maxPlayouts = analysisVisits;
-            bot->setParamsNoClearing(newP);
-            search->runWholeSearch(rootPla);
-            bot->setParamsNoClearing(oldP);
-        }
-
-        bool success = search->getAnalysisJson(
-            perspective,
-            10,    // analysisPVLen
-            false, // preventEncore
-            true,  // includePolicy
-            true,  // includeOwnership
-            false, // includeOwnershipStdev
-            false, // includeMovesOwnership
-            false, // includeMovesOwnershipStdev
-            true,  // includePVVisits
-            false, // includeNoResultValue
-            json
-        );
-
-        if (!success) return env->NewStringUTF("? failed to get analysis");
-
-        std::string jsonStr = json.dump();
-        return env->NewStringUTF(("= " + jsonStr).c_str());
-    }
-
-    LOGE("Unknown GTP command: %s", mainCmd.c_str());
-    return env->NewStringUTF(("? unknown command " + mainCmd).c_str());
+    return env->NewStringUTF(resp.c_str());
 }
 
 extern "C" JNIEXPORT jintArray JNICALL

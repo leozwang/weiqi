@@ -60,5 +60,34 @@
     <string name="iap_promo_title">プレミアムAIを解放</string>
     <string name="iap_promo_desc">一度の購入で、上級およびプロ級の設定が永久に有効化されます。</string>
     <string name="msg_ai_passed">AIがパスしました</string>
-</resources>
 
+    <!-- Dialog Actions -->
+    <string name="btn_cancel">キャンセル</string>
+    <string name="btn_start">開始</string>
+
+    <!-- Moves, game end and messages -->
+    <string name="color_black">黒</string>
+    <string name="color_white">白</string>
+    <string name="last_move_none">まだ着手がありません</string>
+    <string name="last_move_played">%1$sが%2$sに打ちました</string>
+    <string name="last_move_ai_played">%1$s（AI）が%2$sに打ちました</string>
+    <string name="last_move_passed">%1$sがパスしました</string>
+    <string name="last_move_ai_passed">%1$s（AI）がパスしました</string>
+    <string name="last_move_undone">取り消しました。直前の手: %1$s</string>
+    <string name="last_move_undone_start">最初の局面に戻しました</string>
+    <string name="last_move_redone">やり直し: %1$s</string>
+    <string name="resign_result">%1$sの中押し勝ち</string>
+    <string name="game_over">終局</string>
+    <string name="game_concluded">対局が終了しました。</string>
+    <string name="btn_back_to_board">盤面に戻る</string>
+    <string name="result_format">結果: %1$s</string>
+    <string name="counting_score">結果を計算中…</string>
+    <string name="msg_illegal_move">そこには打てません</string>
+    <string name="analysis_summary">黒 %1$d%% %2$s目</string>
+    <string name="handicap_footer_user_black">あなたが黒番で置き石を置きます。AI（白）が先に打ちます。</string>
+    <string name="handicap_footer_user_white">AI が黒番で置き石を置きます。あなた（白）が先に打ちます。</string>
+    <string name="handicap_footer_black">黒が置き石を置き、白が先に打ちます。</string>
+    <string name="label_active_backend">使用中のバックエンド:</string>
+    <string name="label_latest_latency">直近の呼び出し遅延: %1$s</string>
+    <string name="preparing_engine">AIエンジンを準備しています...</string>
+</resources>

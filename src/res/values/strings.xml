@@ -63,5 +63,30 @@
     <string name="iap_promo_title">Unlock Premium AI</string>
     <string name="iap_promo_desc">Purchase once to unlock both Advanced and Pro settings forever.</string>
     <string name="msg_ai_passed">AI passed</string>
-</resources>
 
+    <!-- Moves, game end and messages -->
+    <string name="color_black">Black</string>
+    <string name="color_white">White</string>
+    <string name="last_move_none">No moves yet</string>
+    <string name="last_move_played">%1$s played %2$s</string>
+    <string name="last_move_ai_played">%1$s (AI) played %2$s</string>
+    <string name="last_move_passed">%1$s passed.</string>
+    <string name="last_move_ai_passed">%1$s (AI) passed.</string>
+    <string name="last_move_undone">Undone. Last move: %1$s</string>
+    <string name="last_move_undone_start">Undone to start</string>
+    <string name="last_move_redone">Redone: %1$s</string>
+    <string name="resign_result">%1$s wins by resignation</string>
+    <string name="game_over">Game Over</string>
+    <string name="game_concluded">The game has concluded.</string>
+    <string name="btn_back_to_board">BACK TO BOARD</string>
+    <string name="result_format">Result: %1$s</string>
+    <string name="counting_score">Counting score…</string>
+    <string name="msg_illegal_move">Illegal move</string>
+    <string name="analysis_summary">Black %1$d%% %2$s Pts</string>
+    <string name="handicap_footer_user_black">You play Black and receive the handicap stones. The AI (White) moves first.</string>
+    <string name="handicap_footer_user_white">The AI plays Black and receives the handicap stones. You (White) move first.</string>
+    <string name="handicap_footer_black">Black receives the handicap stones. White moves first.</string>
+    <string name="label_active_backend">Active Backend:</string>
+    <string name="label_latest_latency">Latest Call Latency: %1$s</string>
+    <string name="preparing_engine">Preparing AI engine...</string>
+</resources>

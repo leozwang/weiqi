@@ -93,8 +93,8 @@ android_binary(
         "applicationId": "com.cwave.weiqi",
         "minSdkVersion": "26",
         "targetSdkVersion": "36",
-        "versionCode": "25",
-        "versionName": "3.5",
+        "versionCode": "26",
+        "versionName": "3.6",
     },
     nocompress_extensions = [
         ".so",
@@ -130,8 +130,8 @@ android_application(
         "applicationId": "com.cwave.weiqi",
         "minSdkVersion": "26",
         "targetSdkVersion": "36",
-        "versionCode": "25",
-        "versionName": "3.5",
+        "versionCode": "26",
+        "versionName": "3.6",
     },
     nocompress_extensions = [
         ".so",

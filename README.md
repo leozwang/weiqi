@@ -19,6 +19,13 @@ To launch the application:
 adb shell am start -n com.cwave.weiqi/com.cwave.weiqi.MainActivity
 ```
 
+## Release Testing
+
+Before every release, run the full test pass in [doc/test_plan.md](doc/test_plan.md): pre-release checks, test cases T1–T19, the manual checks M1–M5, and the premium and payment tests P1–P10. Most of it is automated:
+```bash
+python3 tools/release_tests.py --out /tmp/weiqi-release-test
+```
+
 ## Knowledge
 
 ### **The Go Text Protocol**
@@ -257,6 +264,9 @@ For local development or testing AI strengths without configuring Google Play Co
    val isPremiumUnlocked = true
    ```
 This will instantly unlock the "Advanced" and "Pro" AI strengths and disable the IAP dialog flow in your local compiler build.
+
+> [!WARNING]
+> Revert this bypass (and any similar change, such as `MutableStateFlow(true)` for `_isPremiumUnlocked` in `BillingManager.kt`) before building a release. The [pre-release checks](doc/test_plan.md#1-pre-release-checks) in the test plan fail while it is present.
 
 
 
