@@ -5,6 +5,16 @@ bazel_dep(name = "apple_support", version = "1.24.2")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "protobuf", version = "33.4")
 bazel_dep(name = "rules_android", version = "0.7.1")
+
+# With R8 (proguard_specs in src/BUILD), rules_android 0.7.1 does not pass the R8 mapping file on to
+# android_application, so release.aab would have no BUNDLE-METADATA/.../proguard.map and Play Console
+# could not de-obfuscate crash reports. The patch is the upstream fix (rules_android main, not in
+# 0.8.0 yet); drop it when upgrading to a release that has ProguardMappingInfo in r8.bzl.
+single_version_override(
+    module_name = "rules_android",
+    patch_strip = 1,
+    patches = ["//third_party/rules_android:r8_proguard_mapping.patch"],
+)
 bazel_dep(name = "rules_android_ndk", version = "0.1.5")
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_java", version = "9.3.0")

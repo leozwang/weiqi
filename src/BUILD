@@ -47,6 +47,7 @@ kt_android_library(
         "@maven//:androidx_arch_core_core_common",
         "@maven//:androidx_arch_core_core_runtime",
         "@maven//:androidx_collection_collection",
+        "@maven//:androidx_activity_activity",
         "@maven//:androidx_activity_activity_compose",
         "@maven//:androidx_compose_foundation_foundation",
         "@maven//:androidx_compose_foundation_foundation_layout",
@@ -77,7 +78,6 @@ kt_android_library(
         "@maven//:androidx_tracing_tracing",
         "@maven//:androidx_savedstate_savedstate",
         "@maven//:androidx_security_security_crypto",
-        "@maven//:com_google_android_material_material",
         "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_android",
         "@maven//:com_google_guava_listenablefuture",
         "@maven//:com_android_billingclient_billing",
@@ -93,13 +93,16 @@ android_binary(
         "applicationId": "com.cwave.weiqi",
         "minSdkVersion": "26",
         "targetSdkVersion": "36",
-        "versionCode": "26",
-        "versionName": "3.6",
+        "versionCode": "27",
+        "versionName": "3.7",
     },
     nocompress_extensions = [
         ".so",
         ".mp3",
     ],
+    # R8 shrinks, optimizes and obfuscates the code. Its mapping file (needed to read crash stack
+    # traces) is written to bazel-bin/src/app_proguard.map.
+    proguard_specs = ["proguard-rules.pro"],
     deps = [
          ":lib",
          "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",
@@ -130,13 +133,15 @@ android_application(
         "applicationId": "com.cwave.weiqi",
         "minSdkVersion": "26",
         "targetSdkVersion": "36",
-        "versionCode": "26",
-        "versionName": "3.6",
+        "versionCode": "27",
+        "versionName": "3.7",
     },
     nocompress_extensions = [
         ".so",
         ".mp3",
     ],
+    # Same R8 setup as :app. Mapping file: bazel-bin/src/app_bundle_base_proguard.map.
+    proguard_specs = ["proguard-rules.pro"],
     deps = [
         ":lib",
         "//src/java/com/cwave/weiqi/katago:libkatago_jni.so",

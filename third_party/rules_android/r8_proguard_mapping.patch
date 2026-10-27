@@ -1,0 +1,23 @@
+--- a/rules/android_binary/r8.bzl
++++ b/rules/android_binary/r8.bzl
+@@ -13,7 +13,7 @@
+ # limitations under the License.
+ """R8 processor steps for android_binary."""
+ 
+-load("//providers:providers.bzl", "AndroidDexInfo", "AndroidPreDexJarInfo")
++load("//providers:providers.bzl", "AndroidDexInfo", "AndroidPreDexJarInfo", "ProguardMappingInfo")
+ load("//rules:acls.bzl", "acls")
+ load("//rules:android_neverlink_aspect.bzl", "StarlarkAndroidNeverlinkInfo")
+ load("//rules:common.bzl", "common")
+@@ -121,9 +121,11 @@
+         value = struct(
+             final_classes_dex_zip = dexes_zip,
+             dex_info = android_dex_info,
++            implicit_outputs = [proguard_mappings_output_file],
+             providers = [
+                 android_dex_info,
+                 AndroidPreDexJarInfo(pre_dex_jar = deploy_jar),
++                ProguardMappingInfo(proguard_mapping = proguard_mappings_output_file),
+             ],
+         ),
+     )

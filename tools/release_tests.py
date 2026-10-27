@@ -3,18 +3,25 @@
 
 Drives a connected phone over adb: taps UI elements by their text (uiautomator), reads the Go board
 from screenshots, and checks the engine and billing log (logcat). It never completes a purchase.
+Step b1 checks the release build itself on the computer (no phone needed).
 
   python3 tools/release_tests.py --out /tmp/release-test           # every step, premium auto-detected
   python3 tools/release_tests.py --out /tmp/release-test t1 t2     # selected steps
+  python3 tools/release_tests.py --out /tmp/release-test b1        # the build only, no phone
   python3 tools/release_tests.py --list
 
-Requirements: adb, Python 3 with numpy and Pillow, ffmpeg (step t1).
+The app follows the phone's rotation, so the runner pins portrait for the run (T20 and T21 turn the
+screen themselves) and restores the phone's rotation settings at the end.
+
+Requirements: adb, Python 3 with numpy and Pillow, ffmpeg (step t1), Android SDK build-tools with aapt2
+and dexdump (step b1; found through $ANDROID_HOME).
 """
 import argparse
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -249,17 +256,37 @@ def screenshot(name):
     return np.asarray(Image.open(p).convert("RGB")).astype(int)
 
 
-def board_geom(img):
-    """(x0, y0, step) of the 19x19 grid: the board fills the screen width with a 3% margin."""
+def board_mask(img):
+    """Pixels of the board's wood color (0xFFCC66)."""
+    return (img[..., 0] > 225) & (img[..., 1] > 170) & (img[..., 1] < 235) & (img[..., 2] < 150)
+
+
+def board_rect(img):
+    """(x0, y0, size) of the board square, wherever the layout puts it (under the status card in portrait,
+    beside the panel in landscape). The board's 3% margin always shows an unbroken strip of wood color
+    above the first grid line (stones never reach the edge), so the first long run of wood color from
+    the top is the board's top edge, and its length is the board's size."""
     h, w, _ = img.shape
-    margin = w * 0.03
-    step = (w - 2 * margin) / 18
-    x = int(margin + step * 0.5)  # between two grid lines
-    top = next((y for y in range(300, h - 300)
-                if img[y, x][0] > 225 and 170 < img[y, x][1] < 235 and img[y, x][2] < 150), None)
-    if top is None:
-        raise RuntimeError("board not found on screen (covered by a dialog?)")
-    return margin, top + margin, step
+    mask = board_mask(img)
+    min_run = 0.3 * min(w, h)
+    for y in range(h):
+        row = mask[y]
+        if row.sum() < min_run:
+            continue
+        edges = np.diff(np.concatenate(([0], row.astype(np.int8), [0])))
+        starts, ends = np.where(edges == 1)[0], np.where(edges == -1)[0]
+        i = int((ends - starts).argmax())
+        if ends[i] - starts[i] >= min_run:
+            return int(starts[i]), y, int(ends[i] - starts[i])
+    raise RuntimeError("board not found on screen (covered by a dialog?)")
+
+
+def board_geom(img):
+    """(x0, y0, step) of the 19x19 grid: the first line is 3% of the board's size in from its edge."""
+    x, y, size = board_rect(img)
+    margin = size * 0.03
+    step = (size - 2 * margin) / 18
+    return x + margin, y + margin, step
 
 
 def point(c, r, geom):
@@ -284,6 +311,103 @@ def read_board(img):
 
 def count(stones, color):
     return sum(1 for v in stones.values() if v == color)
+
+
+# ------------------------------------------------------------------ rotation and system bars
+ROTATION_SAVED = None  # the phone's (auto-rotate, rotation) settings before the run
+WM_OVERRIDDEN = False  # True while T20 simulates a tablet with `wm size` / `wm density`
+
+
+def set_rotation(r):
+    """Turn the screen: 0 portrait, 1 landscape, 2 upside down, 3 reverse landscape (auto-rotate off).
+    The app no longer locks portrait, so the runner pins the rotation itself."""
+    sh("settings put system accelerometer_rotation 0")
+    sh(f"settings put system user_rotation {r}")
+    time.sleep(3.0)
+
+
+def lock_portrait():
+    """Pin portrait for the run (most steps tap portrait coordinates); remember the user's settings."""
+    global ROTATION_SAVED
+    if ROTATION_SAVED is None:
+        ROTATION_SAVED = (sh("settings get system accelerometer_rotation").strip(),
+                          sh("settings get system user_rotation").strip())
+    set_rotation(0)
+
+
+def restore_phone():
+    """Undo what the runner changed on the phone: simulated screen size, rotation settings."""
+    global WM_OVERRIDDEN
+    if WM_OVERRIDDEN:
+        sh("wm size reset")
+        sh("wm density reset")
+        WM_OVERRIDDEN = False
+    if ROTATION_SAVED:
+        acc, rot = ROTATION_SAVED
+        if rot.isdigit():
+            sh(f"settings put system user_rotation {rot}")
+        if acc.isdigit():
+            sh(f"settings put system accelerometer_rotation {acc}")
+
+
+def system_bars():
+    """Screen rectangles (left, top, right, bottom) of the status bar, navigation bar and display cutout
+    in the current rotation, from the window manager's inset sources."""
+    bars = {}
+    rx = (r"InsetsSource id=\S+ type=(statusBars|navigationBars|displayCutout) "
+          r"frame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\] visible=(\w+)")
+    for m in re.finditer(rx, sh("dumpsys window")):
+        box = tuple(int(g) for g in m.groups()[1:5])
+        if m.group(1) not in bars and m.group(6) == "true" and box[2] > box[0] and box[3] > box[1]:
+            bars[m.group(1)] = box
+    return bars
+
+
+def overlaps(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+# The labeled controls of the game screen (Two Players / against the AI), in both layouts.
+CONTROLS = ["围棋 碁 GO!", "Toggle AI Analysis", "PASS", "PLACE", "Undo", "NEW GAME", "Redo"]
+
+
+def layout_check(case, label, img, nodes):
+    """The board and every control are entirely on screen, clear of the system bars and the display cutout,
+    and no control covers the board. Returns the board's rectangle."""
+    h, w, _ = img.shape
+    bars = system_bars()
+    x, y, size = board_rect(img)
+    board = (x, y, x + size, y + size)
+    missing = [c for c in CONTROLS if find(c, nodes) is None]
+    problems = [f"board under the {name} {bar}" for name, bar in bars.items() if overlaps(board, bar)]
+    if board[2] > w or board[3] > h:
+        problems.append(f"board off screen {board}")
+    for c in CONTROLS:
+        n = find(c, nodes)
+        if n is None:
+            continue
+        b = tuple(n["bounds"])
+        if b[0] < 0 or b[1] < 0 or b[2] > w or b[3] > h:
+            problems.append(f"{c} off screen {b}")
+        problems += [f"{c} under the {name}" for name, bar in bars.items() if overlaps(b, bar)]
+        if overlaps(b, board):
+            problems.append(f"{c} on the board")
+    check(case, f"{label}: board and controls on screen, clear of the system bars and camera cutout",
+          not missing and not problems, f"missing={missing} problems={problems[:4]} bars={bars}")
+    return board
+
+
+def bar_colors(img):
+    """(share of the app's purple in the status bar, mean brightness behind the navigation bar)."""
+    bars = system_bars()
+    purple_share = brightness = None
+    if "statusBars" in bars:
+        l, t, r, b = bars["statusBars"]
+        purple_share = float(purple(img[t:b, l:r]).mean())
+    if "navigationBars" in bars:
+        l, t, r, b = bars["navigationBars"]
+        brightness = float(img[t:b, l:r].mean())
+    return purple_share, brightness
 
 
 # ------------------------------------------------------------------ results
@@ -1520,7 +1644,352 @@ def upgrade():
           f"{len(before)} vs {len(after)} stones; refused={refused(m)}")
 
 
+# ------------------------------------------------------------------ B1: the release build (no phone)
+def build_tools():
+    """Newest Android SDK build-tools folder (aapt2, dexdump)."""
+    sdk = (os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+           or os.path.expanduser("~/Library/Android/sdk"))
+    root = os.path.join(sdk, "build-tools")
+    versions = sorted(os.listdir(root), key=lambda v: [int(x) if x.isdigit() else -1 for x in re.split(r"[.-]", v)])
+    return os.path.join(root, versions[-1])
+
+
+def parse_mapping(path):
+    """R8 mapping file -> (header {key: value}, classes {obfuscated: original},
+    methods {(obfuscated class, obfuscated method): {original methods}}). For inlined code R8 writes the
+    inlined frames first and the method they were inlined into last; only that outer method is kept."""
+    header, classes, outer = {}, {}, {}
+    cls_obf = cls_orig = None
+    member_rx = re.compile(r"\s+(?:(\d+):(\d+):)?\S+ ([^\s(]+)\(.*?\)(?::\d+(?::\d+)?)? -> (\S+)$")
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for n, line in enumerate(f):
+            line = line.rstrip("\n")
+            if line.startswith("#"):
+                m = re.match(r"# (\w+): (.*)", line)
+                if m:
+                    header.setdefault(m.group(1), m.group(2).strip())
+            elif not line.startswith(" "):
+                m = re.match(r"(\S+) -> (\S+):$", line)
+                if m:
+                    cls_orig, cls_obf = m.groups()
+                    classes[cls_obf] = cls_orig
+            elif cls_obf:
+                m = member_rx.match(line)
+                if m:
+                    orig = m.group(3) if "." in m.group(3) else f"{cls_orig}.{m.group(3)}"
+                    group = (m.group(1), m.group(2)) if m.group(1) else n
+                    outer[(cls_obf, m.group(4), group)] = orig  # a later frame of the group wins
+    methods = {}
+    for (cls, name, _), orig in outer.items():
+        methods.setdefault((cls, name), set()).add(orig)
+    return header, classes, methods
+
+
+def dex_methods(dex_files, dexdump):
+    """{(class, method): set of invoked (class, method)} and {class: native method names} of the dex files."""
+    calls, natives = {}, {}
+    invoke_rx = re.compile(r"invoke-\w+(?:/range)? \{[^}]*\}, L([^;]+);\.([^:]+):")
+    for dex in dex_files:
+        out = subprocess.run([dexdump, "-d", dex], capture_output=True, text=True, errors="replace").stdout
+        cls = name = cur = None
+        for line in out.splitlines():
+            if "Class descriptor" in line:
+                m = re.search(r"'L(.+);'", line)
+                cls, cur = (m.group(1).replace("/", "."), None) if m else (None, None)
+            elif line.startswith("      name"):
+                name = line.split("'")[1] if "'" in line else None
+            elif line.startswith("      type") and "'(" in line and cls and name:
+                cur = (cls, name)
+                calls.setdefault(cur, set())
+            elif line.startswith("      access") and "NATIVE" in line and cur:
+                natives.setdefault(cls, set()).add(cur[1])
+            elif "invoke-" in line and cur:
+                m = invoke_rx.search(line)
+                if m:
+                    calls[cur].add((m.group(1).replace("/", "."), m.group(2)))
+    return calls, natives
+
+
+# Window APIs deprecated by Android 15's edge-to-edge (Play Console: "deprecated APIs or parameters").
+DEPRECATED_E2E = ("setStatusBarColor", "setNavigationBarColor", "setNavigationBarDividerColor",
+                  "setStatusBarContrastEnforced", "getStatusBarColor", "getNavigationBarColor",
+                  "getNavigationBarDividerColor")
+
+
+def deprecated_e2e_callers(calls, methods, classes):
+    """Original (de-obfuscated) methods that call a deprecated edge-to-edge Window API, directly or through
+    R8's synthetic outlines and lambdas."""
+    callers_of = {}
+    for caller, targets in calls.items():
+        for t in targets:
+            callers_of.setdefault(t, set()).add(caller)
+
+    def originals(key):
+        return methods.get(key) or {f"{classes.get(key[0], key[0])}.{key[1]}"}
+
+    def synthetic(name):
+        return any(s in name for s in ("$$ExternalSynthetic", "$$Lambda", "R8$$", "-$$"))
+
+    found, seen = set(), set()
+    todo = [c for c, ts in calls.items() if any(t[0] == "android.view.Window" and t[1] in DEPRECATED_E2E for t in ts)]
+    while todo:
+        key = todo.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        names = originals(key)
+        if all(synthetic(o) for o in names):
+            todo.extend(callers_of.get(key, ()))
+        else:
+            found |= {o for o in names if not synthetic(o)}
+    return found
+
+
+def b1():
+    """B1: the release build itself, checked on the computer (no phone): R8 obfuscation (Play Console:
+    "DEX code optimization"), no deprecated edge-to-edge API calls except Google's enableEdgeToEdge(),
+    no orientation or resizability restrictions, and the R8 mapping file that belongs to the APK."""
+    apk = ARGS.apk
+    mapping = ARGS.mapping or os.path.join(os.path.dirname(apk), "app_proguard.map")
+    if not check("B1", "release APK found", os.path.exists(apk), apk):
+        return
+    bt = build_tools()
+    manifest = subprocess.run([os.path.join(bt, "aapt2"), "dump", "xmltree", "--file", "AndroidManifest.xml", apk],
+                              capture_output=True, text=True).stdout
+    version = re.search(r"versionName\(0x0101021c\)=\"([^\"]+)\"", manifest)
+    code = re.search(r"versionCode\(0x0101021b\)=(\d+)", manifest)
+    target = re.search(r"targetSdkVersion\(0x01010270\)=(\d+)", manifest)
+    act(f"B1 {apk}: versionName={version and version.group(1)} versionCode={code and code.group(1)}")
+    restrictions = [l.strip()[:90] for l in manifest.splitlines()
+                    if re.search(r":(screenOrientation|maxAspectRatio|minAspectRatio)\(", l)
+                    or re.search(r":resizeableActivity\(0x[0-9a-f]+\)=false", l)]
+    check("B1", "manifest: no orientation lock, aspect-ratio limit or resizeableActivity=false",
+          bool(manifest) and not restrictions, restrictions[:3] or "aapt2 printed nothing")
+    check("B1", "manifest: targets SDK 35 or newer (Android 15 edge-to-edge)",
+          target is not None and int(target.group(1)) >= 35, target and target.group(1))
+
+    tmp = os.path.join(OUT, "b1_dex")
+    os.makedirs(tmp, exist_ok=True)
+    subprocess.run(["unzip", "-o", "-q", apk, "classes*.dex", "-d", tmp])
+    dex_files = sorted(os.path.join(tmp, f) for f in os.listdir(tmp) if f.endswith(".dex"))
+    markers = set()
+    for d in dex_files:
+        markers |= set(re.findall(rb"~~R8\{[^}]*\}", open(d, "rb").read()))
+    marker = markers.pop().decode() if len(markers) == 1 else ""
+    check("B1", "the code was compiled by R8 in release mode", '"compilation-mode":"release"' in marker, marker or markers)
+    if not check("B1", "R8 mapping file found", os.path.exists(mapping), f"{mapping} (use --mapping)"):
+        return
+    header, classes, methods = parse_mapping(mapping)
+    map_id = header.get("pg_map_id", "?")
+    check("B1", "the mapping file belongs to this APK (same pg-map-id)", f'"pg-map-id":"{map_id}"' in marker,
+          f"mapping {map_id}; dex marker {marker[:120]}")
+
+    out_classes = {o: c for o, c in classes.items() if not o.startswith("R8$$REMOVED")}
+    renamed = sum(1 for o, c in out_classes.items() if o != c)
+    share = renamed / max(1, len(out_classes))
+    check("B1", f"obfuscation: {100 * share:.0f}% of {len(out_classes)} classes renamed (Play wants 25%+)", share > 0.5)
+    kept_app = sorted(c for o, c in out_classes.items() if o == c and c.startswith("com.cwave."))
+    expected_kept = ["com.cwave.weiqi.MainActivity", "com.cwave.weiqi.WeiqiApplication",
+                     "com.cwave.weiqi.katago.KataGoBridge", "com.cwave.weiqi.katago.KataGoBridgeEigen"]
+    check("B1", "app code obfuscated except the manifest entry points and the JNI bridges", kept_app == expected_kept,
+          f"names kept: {kept_app}")
+    calls, natives = dex_methods(dex_files, os.path.join(bt, "dexdump"))
+    jni = {"init", "sendGtpCommand", "getBoardState", "shutdown"}
+    bridges = {c: natives.get(c, set()) for c in ("com.cwave.weiqi.katago.KataGoBridge",
+                                                   "com.cwave.weiqi.katago.KataGoBridgeEigen")}
+    check("B1", "JNI: both bridges keep their native methods' names (the .so files look them up by name)",
+          all(v == jni for v in bridges.values()), bridges)
+    material = sorted(c for c in out_classes.values() if c.startswith("com.google.android.material."))
+    check("B1", "Material Components removed (BottomSheetDialog, SheetDialog, EdgeToEdgeUtils)", not material,
+          material[:3])
+    callers = deprecated_e2e_callers(calls, methods, classes)
+    others = sorted(c for c in callers if not c.startswith("androidx.activity.EdgeToEdge"))
+    check("B1", "deprecated edge-to-edge Window APIs: only called by androidx enableEdgeToEdge()",
+          not others, f"other callers: {others[:4]}")
+
+    # The bundle uploaded to Play is built with the same R8 rules and carries its own mapping file, which
+    # Play Console reads to de-obfuscate crash reports (no separate upload).
+    aab = os.path.join(os.path.dirname(apk), "release.aab")
+    if check("B1", "release.aab found (bazel build //src:release_bundle)", os.path.exists(aab), aab):
+        raw = subprocess.run(["unzip", "-p", aab, "base/dex/classes*.dex"], capture_output=True).stdout
+        aab_markers = {m.decode() for m in re.findall(rb"~~R8\{[^}]*\}", raw)}
+        embedded = subprocess.run(["unzip", "-p", aab, "BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map"],
+                                  capture_output=True).stdout[:4000].decode("utf-8", "replace")
+        aab_id = re.search(r"# pg_map_id: (\S+)", embedded)
+        check("B1", "release.aab: R8 release build with its mapping file inside (BUNDLE-METADATA)",
+              aab_id is not None and any('"compilation-mode":"release"' in m and f'"pg-map-id":"{aab_id.group(1)}"' in m
+                                         for m in aab_markers),
+              f"dex markers={aab_markers} embedded mapping id={aab_id and aab_id.group(1)}")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ------------------------------------------------------------------ T20, T21: rotation, large screens, edge to edge
+def game_screen():
+    """The game screen in front, with no dialog open."""
+    if not pid():
+        launch_and_wait_engine(timeout=120)
+        time.sleep(2)
+    nodes = dump()
+    if in_dialog(nodes):
+        tap_label("CANCEL", nodes, wait=1.0)
+        nodes = dump()
+    if find("BACK TO BOARD", nodes):
+        tap_label("BACK TO BOARD", nodes, wait=1.0)
+        nodes = dump()
+    return nodes
+
+
+def restarted_since(m):
+    """Log lines that only appear when the activity (and its fragment) is created again."""
+    return grep_logs(r"Initializing KataGoBridge|Falling back to KataGoBridgeEigen|Starting KataGo Engine Init", m)
+
+
+def t20():
+    """T20: rotation, landscape and large screens (Play: no orientation or resizability restrictions)."""
+    global WM_OVERRIDDEN
+    set_rotation(0)
+    force_stop()
+    launch_and_wait_engine(timeout=120)
+    time.sleep(2)
+    new_game("Easy", 0, "Two Players")  # no AI moves: the board only changes when the test plays
+    time.sleep(1.0)
+    geom = board_geom(screenshot("t20_portrait_start"))
+    place(3, 3, geom)
+    time.sleep(0.8)
+    place(15, 15, geom)
+    time.sleep(1.0)
+    before = read_board(screenshot("t20_portrait"))
+    p0, m = pid(), now_dev()
+
+    set_rotation(1)
+    img, nodes = screenshot("t20_landscape"), dump()
+    h, w, _ = img.shape
+    check("T20", "the app turns to landscape with the phone and switches to the side-by-side layout",
+          w > h and bool(grep_logs(r"Layout: side-by-side", m)), f"screen {w}x{h}; {grep_logs(r'Layout:', m)[-1:]}")
+    check("T20", "rotating does not restart the activity or the engine", pid() == p0 and not restarted_since(m),
+          restarted_since(m)[:1])
+    board = layout_check("T20", "landscape", img, nodes)
+    beside = all(find(c, nodes)["bounds"][0] >= board[2] for c in CONTROLS if find(c, nodes))
+    check("T20", "landscape: the board takes the full height, the controls are beside it",
+          board[3] - board[1] > 0.75 * h and beside, f"board={board} screen={w}x{h}")
+    check("T20", "landscape: the game is unchanged", read_board(img) == before)
+    mp = place(9, 9, board_geom(img))  # Black to move
+    time.sleep(1.5)
+    after = read_board(screenshot("t20_landscape_move"))
+    p = plays(mp)
+    check("T20", "landscape: tapping a point and PLACE plays there (K10)", after.get((9, 9)) == "B" and p[:1]
+          and p[0][1] == "K10", f"plays={p}")
+    nodes = open_new_game()
+    dimg = screenshot("t20_landscape_new_game")
+    dh, dw, _ = dimg.shape
+    fits = [x for x in ("New Game", "START", "CANCEL") if find(x, nodes)
+            and find(x, nodes)["bounds"][2] <= dw and find(x, nodes)["bounds"][3] <= dh]
+    check("T20", "landscape: the New Game dialog fits (title, START and CANCEL on screen)", len(fits) == 3, fits)
+    tap_label("CANCEL", nodes, wait=1.0)
+
+    set_rotation(3)
+    layout_check("T20", "reverse landscape (cutout and navigation bar on the other side)",
+                 screenshot("t20_reverse_landscape"), dump())
+    m3 = now_dev()
+    set_rotation(0)
+    img, nodes = screenshot("t20_portrait_back"), dump()
+    check("T20", "back in portrait: stacked layout, same game, no restart",
+          bool(grep_logs(r"Layout: stacked", m3)) and read_board(img) == after and pid() == p0
+          and not restarted_since(m), f"{grep_logs(r'Layout:', m3)[-1:]}")
+    layout_check("T20", "portrait", img, nodes)
+
+    # The AI's reply still arrives when the phone is turned while it searches.
+    new_game("Amateur", 0, "You are Black")
+    time.sleep(1.5)
+    mp = place(3, 15, board_geom(screenshot("t20_ai_start")))
+    set_rotation(1)
+    got = wait_count(r"AI search completed", mp, 1, 90)
+    time.sleep(1.5)
+    st = read_board(screenshot("t20_ai_landscape"))
+    check("T20", "turning the phone while the AI thinks: its move still arrives, nothing restarts",
+          got and st.get((3, 15)) == "B" and count(st, "W") == 1 and pid() == p0 and not restarted_since(m),
+          f"search done={got} B={count(st, 'B')} W={count(st, 'W')}")
+    set_rotation(0)
+
+    # A large screen: an 800 x 1280 dp tablet, simulated on the phone. The density change re-creates the
+    # activity, which must put the game back on screen from its saved state.
+    before = read_board(screenshot("t20_before_tablet"))
+    try:
+        WM_OVERRIDDEN = True
+        m5 = now_dev()
+        sh("wm size 1600x2560")
+        sh("wm density 320")
+        time.sleep(6)
+        ensure_foreground()
+        wait_log(r"Layout: stacked, 800x", m5, timeout=30)
+        time.sleep(2)
+        img, nodes = screenshot("t20_tablet_portrait"), dump()
+        try:
+            restored = read_board(img) == before and find("NEW GAME", nodes) is not None
+        except RuntimeError:
+            restored = False
+        check("T20", "after the activity is re-created (density change) the saved game is back on screen",
+              bool(restarted_since(m5)) and restored, f"re-created={bool(restarted_since(m5))} restored={restored}")
+        layout = [l for l in grep_logs(r"Layout:", m5) if "800x" in l]
+        size = re.search(r"board (\d+)dp", layout[-1]) if layout else None
+        check("T20", "tablet portrait (800x1280 dp): stacked layout with a board of 700 dp or more",
+              size is not None and "stacked" in layout[-1] and int(size.group(1)) >= 700, layout[-1:])
+        layout_check("T20", "tablet portrait", img, nodes)
+        m6 = now_dev()
+        set_rotation(1)
+        img, nodes = screenshot("t20_tablet_landscape"), dump()
+        layout = grep_logs(r"Layout:", m6)
+        check("T20", "tablet landscape (1280x800 dp): side-by-side layout", bool(layout) and "side-by-side" in layout[-1],
+              layout[-1:])
+        layout_check("T20", "tablet landscape", img, nodes)
+    finally:
+        sh("wm size reset")
+        sh("wm density reset")
+        WM_OVERRIDDEN = False
+        set_rotation(0)
+        time.sleep(4)
+
+    # Dark mode switched on and off (e.g. by its sunset schedule) also re-creates the activity.
+    night = sh("cmd uimode night").strip().split(":")[-1].strip()
+    if night in ("yes", "no", "auto"):
+        m7 = now_dev()
+        try:
+            sh("cmd uimode night " + ("no" if night == "yes" else "yes"))
+            time.sleep(4)
+        finally:
+            sh(f"cmd uimode night {night}")
+        time.sleep(5)
+        ensure_foreground()
+        img, nodes = screenshot("t20_after_dark_mode"), dump()
+        try:
+            restored = read_board(img) == before and find("NEW GAME", nodes) is not None
+        except RuntimeError:
+            restored = False
+        check("T20", "after dark mode is switched on and off the game is on screen, unchanged",
+              restored, f"re-created={bool(restarted_since(m7))} restored={restored}")
+    else:
+        check("T20", "dark mode can be switched for the re-creation check", False, f"cmd uimode night: {night}")
+
+
+def t21():
+    """T21: edge to edge (Android 15+ always draws apps behind the system bars): the app's colors fill the
+    status and navigation bar areas, its content stays clear of them, in both orientations."""
+    set_rotation(0)
+    game_screen()
+    for rot, label in ((0, "portrait"), (1, "landscape")):
+        set_rotation(rot)
+        img, nodes = screenshot(f"t21_{label}"), dump()
+        purple_share, nav_light = bar_colors(img)
+        check("T21", f"{label}: the app's purple fills the status bar (light icons on it)",
+              purple_share is not None and purple_share > 0.6, f"purple share {purple_share}")
+        check("T21", f"{label}: the app's light background shows behind the navigation bar",
+              nav_light is None or nav_light > 200, f"mean brightness {nav_light}")
+        layout_check("T21", label, img, nodes)
+    set_rotation(0)
+
+
 STEPS = [
+    ("b1", b1, "B1 release build checks on the computer: R8 obfuscation, deprecated APIs, manifest, mapping file"),
     ("t1", t1, "T1 first-run GPU tuning (clears app data, records the screen)"),
     ("t2", t2, "T2 normal start"),
     ("t3", t3, "T3 difficulty + P1-P4 (premium off) or P10 (premium on); opens and closes the Play sheet, airplane mode for P4"),
@@ -1537,7 +2006,10 @@ STEPS = [
     ("t16", t16, "T16 game over, relaunch, Undo"),
     ("t17", t17, "T17 settings saved and restored"),
     ("t18", t18, "T18 Japanese and Chinese (changes the app language, then restores it)"),
+    ("t20", t20, "T20 rotation, landscape, large screens (turns the screen; simulates a tablet with wm size)"),
+    ("t21", t21, "T21 edge to edge: system bar colors and insets in portrait and landscape"),
 ]
+HOST_STEPS = {"b1"}  # steps that need no phone
 OPTIONAL_STEPS = [
     ("upgrade", upgrade, "U1 update from the previous release (uninstalls the app; needs --previous-apk)"),
 ]
@@ -1564,7 +2036,8 @@ def main():
     parser.add_argument("--premium", choices=["auto", "on", "off"], default="auto",
                         help="premium state of the installed build (default: detect from the New Game dialog)")
     parser.add_argument("--serial", help="adb serial of the phone to use")
-    parser.add_argument("--apk", default="bazel-bin/src/release.apk", help="this build (used by 'upgrade')")
+    parser.add_argument("--apk", default="bazel-bin/src/release.apk", help="this build (used by 'b1', 't2', 'upgrade')")
+    parser.add_argument("--mapping", help="R8 mapping file of --apk (default: app_proguard.map next to it)")
     parser.add_argument("--previous-apk", help="APK of the previous release (used by 'upgrade')")
     parser.add_argument("--list", action="store_true", help="list the steps and exit")
     ARGS = parser.parse_args()
@@ -1581,26 +2054,36 @@ def main():
         parser.error(f"unknown steps: {unknown}; use --list")
     OUT = ARGS.out
     os.makedirs(OUT, exist_ok=True)
-    if not adb("get-state").strip() == "device":
+    phone = any(n not in HOST_STEPS for n in names)
+    if phone and not adb("get-state").strip() == "device":
         print("No phone connected (adb get-state).", file=sys.stderr)
         return 2
-    adb("logcat", "-G", "16M")  # keep a whole step's engine log (the scoring games log ~800 lines)
-    for name in names:
-        print(f"== {name} ==", flush=True)
-        m = now_dev()
+    if phone:
+        adb("logcat", "-G", "16M")  # keep a whole step's engine log (the scoring games log ~800 lines)
+        lock_portrait()
+    try:
+        for name in names:
+            print(f"== {name} ==", flush=True)
+            m = now_dev() if phone else None
+            try:
+                all_steps[name]()
+            except Exception as e:  # record the failure and continue with the next step
+                check(name.upper(), "step ran to completion", False, repr(e))
+            if name in HOST_STEPS:
+                continue
+            try:
+                audit_turns(m)
+            except Exception:
+                pass
+    finally:
+        if phone:
+            restore_phone()
+    if phone:
+        check("T19", "the app never sent a move or search for the wrong color (all steps)", not TURN_AUDIT, TURN_AUDIT[:3])
         try:
-            all_steps[name]()
-        except Exception as e:  # record the failure and continue with the next step
-            check(name.upper(), "step ran to completion", False, repr(e))
-        try:
-            audit_turns(m)
+            premium_on()  # record the premium state in the summary even if no selected step needed it
         except Exception:
             pass
-    check("T19", "the app never sent a move or search for the wrong color (all steps)", not TURN_AUDIT, TURN_AUDIT[:3])
-    try:
-        premium_on()  # record the premium state in the summary even if no selected step needed it
-    except Exception:
-        pass
     ok = write_summary()
     passed = sum(1 for r in RESULTS if r["pass"])
     print(f"\n{passed} of {len(RESULTS)} checks passed. Results: {os.path.join(OUT, 'summary.md')}")

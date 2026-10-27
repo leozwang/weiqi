@@ -44,6 +44,8 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -196,6 +198,7 @@ class GameFragment : Fragment() {
               Box(
                 modifier = Modifier
                   .fillMaxSize()
+                  .windowInsetsPadding(WindowInsets.safeDrawing)
                   .padding(16.dp),
                 contentAlignment = Alignment.BottomCenter
               ) {
@@ -777,716 +780,865 @@ class GameFragment : Fragment() {
     }
 
 
-    Scaffold(
-      topBar = {
-        TopAppBar(
-          title = {
-            Column {
-              Text(
-                text = "围棋 碁 GO!",
-                style = MaterialTheme.typography.h6
-              )
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-              ) {
+    // --- Screen layout ---
+    // The board, the status card and the buttons are arranged in one of two layouts, whichever gives
+    // the bigger board in the current window: stacked under an app bar (phones in portrait), or side
+    // by side, the board next to a panel with everything else (landscape, large screens, wide
+    // windows). The window extends behind the system bars (edge to edge); the content stays clear of
+    // them and of the display cutout. Rotating, folding or resizing switches layouts in place (the
+    // activity handles those configuration changes itself), so a game or an AI search in progress
+    // is not interrupted.
+
+    // The app name and the engine backend in use: the app bar title, or the top of the side panel.
+    @Composable
+    fun AppTitle(onAppBar: Boolean) {
+      Column {
+        Text(
+          text = "围棋 碁 GO!",
+          style = MaterialTheme.typography.h6,
+          color = if (onAppBar) Color.Unspecified else MaterialTheme.colors.primary
+        )
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+          Text(
+            text = backendBadgeText,
+            style = MaterialTheme.typography.caption,
+            color = if (onAppBar) MaterialTheme.colors.onPrimary.copy(alpha = 0.85f) else Color.Gray,
+            fontWeight = FontWeight.Bold
+          )
+          if (showEngineLatency && lastEngineLatencyMs != null) {
+            Text(
+              text = "• ${formatLatency(lastEngineLatencyMs)}",
+              style = MaterialTheme.typography.caption,
+              color = if (onAppBar) MaterialTheme.colors.secondary else MaterialTheme.colors.secondaryVariant,
+              fontWeight = FontWeight.ExtraBold
+            )
+          }
+        }
+      }
+    }
+
+    // Shows or hides the AI analysis (win rate, score lead, territory and candidate moves).
+    @Composable
+    fun AnalysisToggle(onAppBar: Boolean) {
+      val offColor = if (onAppBar) MaterialTheme.colors.onPrimary else MaterialTheme.colors.primary
+      val onColor = if (onAppBar) MaterialTheme.colors.secondary else MaterialTheme.colors.secondaryVariant
+      TextButton(
+        onClick = { showAnalysis = !showAnalysis },
+        modifier = Modifier.padding(end = 8.dp)
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Analytics,
+            tint = if (showAnalysis) onColor else offColor,
+            contentDescription = "Toggle AI Analysis",
+            modifier = Modifier.size(36.dp) // Enlarged by 50% (default icon size is 24dp)
+          )
+          Text(
+            text = context.getString(R.string.btn_analysis),
+            color = if (showAnalysis) onColor else offColor,
+            style = MaterialTheme.typography.button,
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
+    }
+
+    // Whose turn it is and the last move, the analysis summary, or the result of a finished game.
+    @Composable
+    fun StatusCard() {
+      // Fixed-height Header
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .height(100.dp)
+          .padding(horizontal = 10.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Card(
+          modifier = Modifier.fillMaxSize(),
+          elevation = 4.dp,
+          shape = RoundedCornerShape(16.dp)
+        ) {
+          Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp).weight(1f),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center
+            ) {
+              if (isScoring) {
+                // Scoring takes a few seconds; the board stays locked meanwhile.
                 Text(
-                  text = backendBadgeText,
-                  style = MaterialTheme.typography.caption,
-                  color = MaterialTheme.colors.onPrimary.copy(alpha = 0.85f),
-                  fontWeight = FontWeight.Bold
+                  text = context.getString(R.string.counting_score),
+                  style = MaterialTheme.typography.h6,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = MaterialTheme.colors.onSurface
                 )
-                if (showEngineLatency && lastEngineLatencyMs != null) {
+              } else if (finalScoreText != null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                   Text(
-                    text = "• ${formatLatency(lastEngineLatencyMs)}",
-                    style = MaterialTheme.typography.caption,
-                    color = MaterialTheme.colors.secondary,
-                    fontWeight = FontWeight.ExtraBold
+                    text = context.getString(R.string.game_over),
+                    style = MaterialTheme.typography.h5,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colors.onSurface
                   )
+                  Text(
+                    text = context.getString(R.string.result_format, finalScoreText ?: ""),
+                    style = MaterialTheme.typography.subtitle1,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colors.primary
+                  )
+                }
+              } else {
+                if (isEngineInitialized) {
+                  Box(
+                    modifier = Modifier
+                      .size(50.dp)
+                      .clip(CircleShape)
+                      .background(if (currentTurn == Stone.BLACK) Color.Black else Color.White)
+                      .border(
+                        width = if (currentTurn == Stone.WHITE) 2.dp else 0.dp,
+                        color = if (currentTurn == Stone.WHITE) Color.Gray else Color.Transparent,
+                        shape = CircleShape
+                      )
+                  )
+                }
+
+                if (!showAnalysis && isEngineInitialized) {
+                  Spacer(Modifier.width(16.dp))
+                  Text(
+                    text = lastMoveText,
+                    style = MaterialTheme.typography.subtitle1,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colors.onSurface
+                  )
+                }
+
+                if (showAnalysis) {
+                  val blackWinrate = analysis.winrate
+                  val blackScoreLead = analysis.scoreLead
+
+                  val winratePercent = (blackWinrate * 100).toInt()
+                  val scoreLeadFormatted = String.format("%.1f", blackScoreLead)
+                  val leadSign = if (blackScoreLead >= 0) "+" else ""
+
+                  Spacer(Modifier.width(12.dp))
+                  Divider(modifier = Modifier.height(20.dp).width(1.dp), color = Color.Gray.copy(alpha = 0.5f))
+                  Spacer(Modifier.width(12.dp))
+
+                  val latencyText = if (showEngineLatency && lastEngineLatencyMs != null) " (${formatLatency(lastEngineLatencyMs)})" else ""
+                  Text(
+                    text = context.getString(R.string.analysis_summary, winratePercent, "$leadSign$scoreLeadFormatted") + latencyText,
+                    style = MaterialTheme.typography.h6,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colors.primary
+                  )
+                }
+              }
+            }
+
+            if (isThinking) {
+              LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().height(4.dp),
+                color = MaterialTheme.colors.secondary
+              )
+            } else {
+              Spacer(Modifier.height(4.dp))
+            }
+          }
+        }
+      }
+    }
+
+    // The 19x19 board (square: the caller sets its size). Tapping a point previews a move there.
+    @Composable
+    fun GoBoard(modifier: Modifier) {
+      Box(
+        modifier = modifier.background(Color(0xFFFFCC66))
+      ) {
+        val boardMargin = 0.03f
+
+        Canvas(
+          modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(isEngineInitialized, isThinking) {
+              if (!isEngineInitialized || isThinking) return@pointerInput
+                detectTapGestures { offset ->
+                  val marginPx = size.width * boardMargin
+                val gridSizePx = size.width - 2 * marginPx
+                val stepPx = gridSizePx / (boardSize - 1)
+
+                val x = ((offset.x - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
+                val y = ((offset.y - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
+
+                // Only the player to move can pick a point, and not after the game ended.
+                if (finalScoreText == null && isHumanColor(currentMode, currentTurn) && boardState[y][x] == Stone.EMPTY) {
+                  previewMove = x to y
+                }
+                }
+            }
+        ) {
+          val marginPx = size.width * boardMargin
+          val gridSizePx = size.width - 2 * marginPx
+          val stepPx = gridSizePx / (boardSize - 1)
+          val stoneRadius = (stepPx / 2) * 0.98f
+
+          // Draw Grid Lines
+          val lineStart = marginPx
+          val lineEnd = marginPx + (boardSize - 1) * stepPx
+
+          for (i in 0 until boardSize) {
+            val pos = marginPx + i * stepPx
+            drawLine(
+              color = Color.Black.copy(alpha = 0.8f),
+              start = Offset(lineStart, pos),
+              end = Offset(lineEnd, pos),
+              strokeWidth = 1.dp.toPx()
+            )
+            drawLine(
+              color = Color.Black.copy(alpha = 0.8f),
+              start = Offset(pos, lineStart),
+              end = Offset(pos, lineEnd),
+              strokeWidth = 1.dp.toPx()
+            )
+          }
+
+          // Draw Hoshi
+          val hoshiIndices = listOf(3, 9, 15)
+          for (rowIdx in hoshiIndices) {
+            for (colIdx in hoshiIndices) {
+              drawCircle(
+                color = Color.Black,
+                radius = 3.dp.toPx(),
+                center = Offset(marginPx + colIdx * stepPx, marginPx + rowIdx * stepPx)
+              )
+            }
+          }
+
+          if (showAnalysis || finalScoreText != null) {
+            // Draw Ownership Dots/Squares (Territory Analysis)
+            for (row in 0 until boardSize) {
+              for (col in 0 until boardSize) {
+                val score = analysis.ownership[row * boardSize + col]
+                if (abs(score) > 0.1) {
+                  val centerX = marginPx + col * stepPx
+                  val centerY = marginPx + row * stepPx
+
+                  if (finalScoreText != null) {
+                    // Draw final territory as small squares
+                    val squareSize = stepPx * 0.45f
+                    drawRect(
+                      color = if (score > 0) Color.Black.copy(alpha = 0.5f) 
+                              else Color.White.copy(alpha = 0.6f),
+                      topLeft = Offset(centerX - squareSize/2, centerY - squareSize/2),
+                      size = Size(squareSize, squareSize)
+                    )
+                  } else {
+                    // Normal analysis dots
+                    drawCircle(
+                      color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
+                      else Color.White.copy(alpha = (-score * 0.4).toFloat()),
+                        radius = 3.dp.toPx(),
+                      center = Offset(centerX, centerY)
+                    )
+                  }
+                }
+              }
+            }
+          }
+
+          // Draw Stones
+          for (row in 0 until boardSize) {
+            for (col in 0 until boardSize) {
+              val stone = boardState[row][col]
+              if (stone != Stone.EMPTY) {
+                val centerX = marginPx + col * stepPx
+                val centerY = marginPx + row * stepPx
+
+                if (stone == Stone.BLACK) {
+                  drawCircle(
+                    brush = Brush.radialGradient(
+                      colors = listOf(Color(0xFF333333), Color.Black),
+                      center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                      radius = stoneRadius * 1.5f
+                    ),
+                    radius = stoneRadius,
+                    center = Offset(centerX, centerY)
+                  )
+                } else {
+                  drawCircle(
+                    brush = Brush.radialGradient(
+                      colors = listOf(Color.White, Color(0xFFDDDDDD)),
+                      center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                      radius = stoneRadius * 1.5f
+                    ),
+                    radius = stoneRadius,
+                    center = Offset(centerX, centerY)
+                  )
+                  drawCircle(
+                    color = Color.Black.copy(alpha = 0.1f),
+                    radius = stoneRadius,
+                    center = Offset(centerX, centerY),
+                    style = Stroke(width = 0.5.dp.toPx())
+                  )
+                }
+
+                // Mark Last Move
+                if (lastMove?.first == col && lastMove?.second == row) {
+                  drawCircle(
+                    color = if (stone == Stone.BLACK) Color.White else Color.Black,
+                    radius = 4.dp.toPx(),
+                    center = Offset(centerX, centerY)
+                  )
+                }
+              }
+            }
+          }
+
+          if (showAnalysis && finalScoreText == null) {
+            // Draw Candidate Moves (Suggestions)
+            val bestMove = analysis.candidates.maxByOrNull { it.visits }
+
+            analysis.candidates.forEach { candidate ->
+              val centerX = marginPx + candidate.x * stepPx
+              val centerY = marginPx + candidate.y * stepPx
+              val candidateRadius = stoneRadius * 0.75f // 75% of stone size
+
+              if (candidate == bestMove) {
+                // Highlight best move with a dark red ring
+                drawCircle(
+                  color = Color(0xFFB71C1C), // Dark Red
+                  radius = stoneRadius * 0.9f,
+                  center = Offset(centerX, centerY),
+                  style = Stroke(width = 3.dp.toPx())
+                )
+              } else {
+                // Other candidates as solid light red dots
+                drawCircle(
+                  color = Color(0xFFE57373), // Light Red
+                  radius = candidateRadius,
+                  center = Offset(centerX, centerY)
+                )
+              }
+
+              // Display candidate move winrate from the perspective of the player whose turn it is
+              val displayedWinrate = if (currentTurn == Stone.WHITE) 1.0 - candidate.winrate else candidate.winrate
+              val winratePercent = (displayedWinrate * 100).toInt().coerceIn(0, 100)
+              val winrateText = "$winratePercent%"
+              val textPaint = android.graphics.Paint().apply {
+                color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C")
+                else android.graphics.Color.WHITE
+                textSize = 9.dp.toPx()
+                textAlign = android.graphics.Paint.Align.CENTER
+                isAntiAlias = true
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+              }
+              drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawText(
+                  winrateText,
+                  centerX,
+                  centerY + 3.5f.dp.toPx(),
+                  textPaint
+                )
+              }
+            }
+          }                       // Draw Preview Stone (Ghost Stone)
+          previewMove?.let { (px, py) ->
+            val centerX = marginPx + px * stepPx
+            val centerY = marginPx + py * stepPx
+
+            if (currentTurn == Stone.BLACK) {
+              drawCircle(
+                brush = Brush.radialGradient(
+                  colors = listOf(Color(0xFF333333).copy(alpha = 0.6f), Color.Black.copy(alpha = 0.6f)),
+                  center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                  radius = stoneRadius * 1.5f
+                ),
+                radius = stoneRadius,
+                center = Offset(centerX, centerY)
+              )
+              drawCircle(
+                color = Color.Black.copy(alpha = 0.15f),
+                radius = stoneRadius,
+                center = Offset(centerX, centerY),
+                style = Stroke(width = 0.5.dp.toPx())
+              )
+
+              // Draw a solid white triangle in the center of the black preview stone
+              val path = androidx.compose.ui.graphics.Path().apply {
+                val size = 6.dp.toPx()
+                moveTo(centerX, centerY - size)
+                lineTo(centerX - size, centerY + size * 0.7f)
+                lineTo(centerX + size, centerY + size * 0.7f)
+                close()
+              }
+              drawPath(path = path, color = Color.White.copy(alpha = 0.8f))
+            } else {
+              drawCircle(
+                brush = Brush.radialGradient(
+                  colors = listOf(Color.White.copy(alpha = 0.65f), Color(0xFFDDDDDD).copy(alpha = 0.65f)),
+                  center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
+                  radius = stoneRadius * 1.5f
+                ),
+                radius = stoneRadius,
+                center = Offset(centerX, centerY)
+              )
+              drawCircle(
+                color = Color.Black.copy(alpha = 0.15f),
+                radius = stoneRadius,
+                center = Offset(centerX, centerY),
+                style = Stroke(width = 0.5.dp.toPx())
+              )
+
+              // Draw a solid black triangle in the center of the white preview stone
+              val path = androidx.compose.ui.graphics.Path().apply {
+                val size = 6.dp.toPx()
+                moveTo(centerX, centerY - size)
+                lineTo(centerX - size, centerY + size * 0.7f)
+                lineTo(centerX + size, centerY + size * 0.7f)
+                close()
+              }
+              drawPath(path = path, color = Color.Black.copy(alpha = 0.8f))
+            }
+          }
+        }
+      }
+    }
+
+    @Composable
+    fun MoveButtons(modifier: Modifier) {
+      // --- Top Row: Place / Pass / Auto Button ---
+      Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        if (currentMode == GameMode.AI_BOTH) {
+          // Autoplay Toggle (Auto / Pause)
+          Button(
+            onClick = {
+              val willPlay = !aiAutoPlay
+              aiAutoPlay = willPlay
+              if (willPlay && !isThinking && finalScoreText == null) {
+                scope.launch { handleAiMove(currentTurn) }
+              }
+            },
+            modifier = Modifier.height(56.dp).width(120.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = ButtonDefaults.buttonColors(
+              backgroundColor = if (aiAutoPlay) Color(0xFFE53935) else Color(0xFF43A047)
+            ),
+            elevation = ButtonDefaults.elevation(6.dp)
+          ) {
+            Text(
+              text = if (aiAutoPlay) context.getString(R.string.btn_pause) else context.getString(R.string.btn_auto),
+              color = Color.White,
+              fontWeight = FontWeight.Bold
+            )
+          }
+
+          // Step Button (Execute single AI move when paused)
+          Button(
+            onClick = {
+              if (!isThinking && finalScoreText == null) {
+                scope.launch { handleAiMove(currentTurn) }
+              }
+            },
+            enabled = !aiAutoPlay && !isThinking && finalScoreText == null,
+            modifier = Modifier.height(56.dp).width(110.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = ButtonDefaults.buttonColors(
+              backgroundColor = Color.LightGray.copy(alpha = 0.5f)
+            ),
+            elevation = ButtonDefaults.elevation(4.dp)
+          ) {
+            Text(context.getString(R.string.btn_step), fontWeight = FontWeight.Bold)
+          }
+        } else {
+          // Pass Button
+          Button(
+            onClick = {
+              scope.launch {
+                  val turnColor = currentTurn
+                  val resp = withContext(Dispatchers.IO) {
+                    bridge.sendGtpCommand("play ${gtpColor(turnColor)} pass")
+                  }
+                  if (!resp.startsWith("=")) {
+                    onStatusTextChange("Pass failed: $resp")
+                    return@launch
+                  }
+                  playPassSound()
+                  // Record the pass (and drop any redo moves) so undo/redo and saved-game
+                  // restore keep colors in sync with the engine.
+                  val newHistory = moveHistory.take(historyIndex + 1) + "pass"
+                  val newIndex = historyIndex + 1
+                  moveHistory = newHistory
+                  historyIndex = newIndex
+                  lastMove = null
+                  previewMove = null
+                  val newPasses = consecutivePasses + 1
+                  consecutivePasses = newPasses
+                  lastMoveText = context.getString(R.string.last_move_passed, colorLabel(turnColor))
+                  val nextTurn = opponent(turnColor)
+                  currentTurn = nextTurn
+
+                  checkGameEnd()
+                  saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, passes = newPasses)
+
+                  if (finalScoreText == null) {
+                      if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
+                          handleAiMove(Stone.WHITE)
+                      } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
+                          handleAiMove(Stone.BLACK)
+                      }
+                  }
+              }
+            },
+            enabled = !isThinking && finalScoreText == null && (
+              currentMode == GameMode.USER_BOTH ||
+              (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
+              (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
+            ),
+            modifier = Modifier.height(56.dp).width(80.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = ButtonDefaults.buttonColors(
+              backgroundColor = Color.LightGray.copy(alpha = 0.5f)
+            )
+          ) {
+            Text(context.getString(R.string.btn_pass), fontWeight = FontWeight.Bold)
+          }
+
+          // Place Button (Circular)
+          Button(
+            onClick = {
+              val move = previewMove ?: return@Button
+              val (x, y) = move
+              val turnColor = currentTurn
+              scope.launch {
+                playMove(x, y, turnColor, bridge) { success, moveStr ->
+                  if (success) {
+                    boardState = syncBoardState(bridge)
+                    lastMoveText = context.getString(R.string.last_move_played, colorLabel(turnColor), moveStr)
+                    val newHistory = moveHistory.take(historyIndex + 1) + moveStr
+                    val newIndex = historyIndex + 1
+                    moveHistory = newHistory
+                    historyIndex = newIndex
+                    consecutivePasses = 0
+                    previewMove = null
+                    lastMove = x to y
+                    playMoveSound()
+                    val nextTurn = if (turnColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
+                    currentTurn = nextTurn
+
+                    saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, score = finalScoreText, passes = 0)
+
+                    if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
+                      scope.launch { handleAiMove(Stone.WHITE) }
+                    } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
+                      scope.launch { handleAiMove(Stone.BLACK) }
+                    } else {
+                      onStatusTextChange("Turn.")
+                    }
+                  } else {
+                    // Ko, suicide or an occupied point: the engine refused the move.
+                    Log.i("GameFragment", "Illegal move refused: ${gtpColor(turnColor)} $moveStr")
+                    android.widget.Toast.makeText(context, R.string.msg_illegal_move, android.widget.Toast.LENGTH_SHORT).show()
+                    boardState = syncBoardState(bridge)
+                    previewMove = null
+                  }
+                }
+              }
+            },
+            enabled = previewMove != null && !isThinking && finalScoreText == null && (
+              currentMode == GameMode.USER_BOTH ||
+              (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
+              (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
+            ),
+            modifier = Modifier.size(80.dp),
+            shape = CircleShape,
+            // The default 16dp side padding leaves only 48dp for the label in an 80dp circle,
+            // which wrapped "PLACE" mid-word. Use nearly the full width and keep it on one line.
+            contentPadding = PaddingValues(horizontal = 4.dp),
+            elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
+          ) {
+            Text(context.getString(R.string.btn_place), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+          }
+        }
+      }
+    }
+
+    @Composable
+    fun GameButtons(modifier: Modifier) {
+      // --- Bottom Row: Undo - New Game - Redo ---
+      Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        // Undo Button
+        val undoCount = movesToUndo(currentMode, historyIndex, handicap)
+        IconButton(
+          onClick = {
+            val count = movesToUndo(currentMode, historyIndex, handicap)
+            if (count > 0 && !isThinking) {
+              scope.launch {
+                onThinkingChange(true)
+                // movesToUndo never reaches into the handicap setup. Against the AI it also takes
+                // back the AI's reply, so it is your turn again.
+                var undone = 0
+                while (undone < count) {
+                  val resp = withContext(Dispatchers.IO) { bridge.sendGtpCommand("undo") }
+                  if (!resp.startsWith("=")) {
+                    Log.w("GameFragment", "undo failed: $resp")
+                    break
+                  }
+                  undone++
+                }
+                val newIndex = historyIndex - undone
+                historyIndex = newIndex
+                currentTurn = sideToMove(newIndex, handicap)
+                boardState = syncBoardState(bridge)
+                lastMove = lastPlayedPoint(moveHistory, newIndex, handicap)
+                lastMoveText = if (newIndex >= handicapStoneCount(handicap)) {
+                  context.getString(R.string.last_move_undone, moveHistory[newIndex])
+                } else {
+                  context.getString(R.string.last_move_undone_start)
+                }
+                previewMove = null
+                consecutivePasses = trailingPasses(moveHistory, newIndex, handicap)
+                // Taking back a move after the game ended resumes play.
+                finalScoreText = null
+                showGameOverDialog = false
+                saveGameState(idx = newIndex, turn = currentTurn, score = null, passes = consecutivePasses)
+                onThinkingChange(false)
+              }
+            }
+          },
+          enabled = undoCount > 0 && !isThinking,
+          modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
+        ) {
+          Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
+        }
+
+        // New Game Button
+        Button(
+          onClick = {
+            // Pause AI-vs-AI autoplay so no engine move races with setting up a new game.
+            aiAutoPlay = false
+            showSettings = true
+          },
+          // Starting a new game while the AI is still searching would mix the old game's AI
+          // move into the new game.
+          enabled = !isThinking,
+          modifier = Modifier.height(56.dp).width(140.dp),
+          shape = RoundedCornerShape(28.dp),
+          colors = ButtonDefaults.buttonColors(
+            backgroundColor = MaterialTheme.colors.secondary,
+            contentColor = MaterialTheme.colors.onSecondary
+          ),
+          elevation = ButtonDefaults.elevation(4.dp)
+        ) {
+          Text(context.getString(R.string.btn_new_game), fontWeight = FontWeight.Bold)
+        }
+
+        // Redo Button (off in AI vs AI, like Undo)
+        IconButton(
+          onClick = {
+            if (historyIndex < moveHistory.size - 1 && !isThinking && currentMode != GameMode.AI_BOTH) {
+              scope.launch {
+                onThinkingChange(true)
+                // Against the AI, redo the player's move together with the AI's reply.
+                while (historyIndex < moveHistory.size - 1) {
+                  val moveStr = moveHistory[historyIndex + 1]
+                  val resp = withContext(Dispatchers.IO) {
+                    bridge.sendGtpCommand("play ${gtpColor(currentTurn)} $moveStr")
+                  }
+                  if (!resp.startsWith("=")) {
+                    Log.w("GameFragment", "redo of $moveStr failed: $resp")
+                    break
+                  }
+                  historyIndex += 1
+                  currentTurn = opponent(currentTurn)
+                  if (!isUserVsAi(currentMode) || !isAiTurn(currentMode, currentTurn)) break
+                }
+                boardState = syncBoardState(bridge)
+                val newIndex = historyIndex
+                lastMove = lastPlayedPoint(moveHistory, newIndex, handicap)
+                lastMoveText = context.getString(R.string.last_move_redone, moveHistory.getOrNull(newIndex) ?: "")
+                previewMove = null
+                consecutivePasses = trailingPasses(moveHistory, newIndex, handicap)
+                saveGameState(idx = newIndex, turn = currentTurn, passes = consecutivePasses)
+                onThinkingChange(false)
+                if (consecutivePasses >= 2) {
+                  checkGameEnd()
+                } else if (isUserVsAi(currentMode) && isAiTurn(currentMode, currentTurn)) {
+                  // The redo history ended on the AI's turn: let it move.
+                  handleAiMove(currentTurn)
                 }
               }
             }
           },
-          backgroundColor = MaterialTheme.colors.primary,
-          contentColor = MaterialTheme.colors.onPrimary,
-          elevation = 4.dp,
-          actions = {
-            TextButton(
-              onClick = { showAnalysis = !showAnalysis },
-              modifier = Modifier.padding(end = 8.dp)
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-              ) {
-                Icon(
-                  imageVector = Icons.Default.Analytics,
-                  tint = if (showAnalysis) MaterialTheme.colors.secondary else MaterialTheme.colors.onPrimary,
-                  contentDescription = "Toggle AI Analysis",
-                  modifier = Modifier.size(36.dp) // Enlarged by 50% (default icon size is 24dp)
-                )
-                Text(
-                  text = context.getString(R.string.btn_analysis),
-                  color = if (showAnalysis) MaterialTheme.colors.secondary else MaterialTheme.colors.onPrimary,
-                  style = MaterialTheme.typography.button,
-                  fontWeight = FontWeight.Bold
-                )
-              }
-            }
-          }
-        )
+          enabled = historyIndex < moveHistory.size - 1 && !isThinking && currentMode != GameMode.AI_BOTH,
+          modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
+        ) {
+          Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", tint = MaterialTheme.colors.primary)
+        }
       }
-    ) { paddingValues ->
-          Column(
-            modifier = Modifier
-              .fillMaxSize()
-              .padding(paddingValues),
-            horizontalAlignment = Alignment.CenterHorizontally
-          ) {
-            // Fixed-height Header
-            Box(
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp)
-                .padding(horizontal = 10.dp, vertical = 4.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Card(
-                modifier = Modifier.fillMaxSize(),
-                elevation = 4.dp,
-                shape = RoundedCornerShape(16.dp)
-              ) {
-                Column(
-                  modifier = Modifier.fillMaxSize(),
-                  verticalArrangement = Arrangement.Center,
-                  horizontalAlignment = Alignment.CenterHorizontally
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+          BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val safeArea = WindowInsets.safeDrawing.asPaddingValues()
+            val layoutDirection = LocalLayoutDirection.current
+            val areaWidth = maxWidth - safeArea.calculateLeftPadding(layoutDirection) -
+              safeArea.calculateRightPadding(layoutDirection)
+            val areaHeight = maxHeight - safeArea.calculateTopPadding() - safeArea.calculateBottomPadding()
+            // The board's size in each layout. Stacked: the app bar (56dp), status card (100dp), move
+            // buttons (96dp), game buttons (88dp) and bottom gap (32dp) share the height with the board.
+            // Side by side: the panel next to the board needs 320dp for the status card and buttons.
+            val stackedBoard = minOf(areaWidth, areaHeight - 372.dp)
+            val sideBoard = minOf(areaHeight, areaWidth - 320.dp)
+            val sideBySide = sideBoard > stackedBoard
+            LaunchedEffect(sideBySide, areaWidth, areaHeight) {
+              Log.i(
+                "GameFragment",
+                "Layout: ${if (sideBySide) "side-by-side" else "stacked"}, " +
+                  "${areaWidth.value.roundToInt()}x${areaHeight.value.roundToInt()}dp, " +
+                  "board ${maxOf(sideBoard, stackedBoard).value.roundToInt()}dp"
+              )
+            }
+
+            if (sideBySide) {
+              Column(modifier = Modifier.fillMaxSize()) {
+                // The status bar stays on the app's purple, as over the stacked layout's app bar.
+                Spacer(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colors.primary)
+                    .windowInsetsTopHeight(WindowInsets.safeDrawing)
+                )
+                Row(
+                  modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .windowInsetsPadding(
+                      WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+                    )
                 ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 12.dp).weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                  Box(
+                    modifier = Modifier
+                      .fillMaxHeight()
+                      .width(sideBoard),
+                    contentAlignment = Alignment.Center
                   ) {
-                    if (isScoring) {
-                      // Scoring takes a few seconds; the board stays locked meanwhile.
-                      Text(
-                        text = context.getString(R.string.counting_score),
-                        style = MaterialTheme.typography.h6,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colors.onSurface
-                      )
-                    } else if (finalScoreText != null) {
-                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                          text = context.getString(R.string.game_over),
-                          style = MaterialTheme.typography.h5,
-                          fontWeight = FontWeight.ExtraBold,
-                          color = MaterialTheme.colors.onSurface
-                        )
-                        Text(
-                          text = context.getString(R.string.result_format, finalScoreText ?: ""),
-                          style = MaterialTheme.typography.subtitle1,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colors.primary
-                        )
+                    GoBoard(Modifier.size(sideBoard))
+                  }
+                  Column(
+                    modifier = Modifier
+                      .weight(1f)
+                      .fillMaxHeight()
+                  ) {
+                    Row(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, top = 8.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Box(modifier = Modifier.weight(1f)) {
+                        AppTitle(onAppBar = false)
                       }
-                    } else {
-                      if (isEngineInitialized) {
-                        Box(
-                          modifier = Modifier
-                            .size(50.dp)
-                            .clip(CircleShape)
-                            .background(if (currentTurn == Stone.BLACK) Color.Black else Color.White)
-                            .border(
-                              width = if (currentTurn == Stone.WHITE) 2.dp else 0.dp,
-                              color = if (currentTurn == Stone.WHITE) Color.Gray else Color.Transparent,
-                              shape = CircleShape
-                            )
-                        )
-                      }
-
-                      if (!showAnalysis && isEngineInitialized) {
-                        Spacer(Modifier.width(16.dp))
-                        Text(
-                          text = lastMoveText,
-                          style = MaterialTheme.typography.subtitle1,
-                          fontWeight = FontWeight.Bold,
-                          color = MaterialTheme.colors.onSurface
-                        )
-                      }
-
-                      if (showAnalysis) {
-                        val blackWinrate = analysis.winrate
-                        val blackScoreLead = analysis.scoreLead
-
-                        val winratePercent = (blackWinrate * 100).toInt()
-                        val scoreLeadFormatted = String.format("%.1f", blackScoreLead)
-                        val leadSign = if (blackScoreLead >= 0) "+" else ""
-
-                        Spacer(Modifier.width(12.dp))
-                        Divider(modifier = Modifier.height(20.dp).width(1.dp), color = Color.Gray.copy(alpha = 0.5f))
-                        Spacer(Modifier.width(12.dp))
-
-                        val latencyText = if (showEngineLatency && lastEngineLatencyMs != null) " (${formatLatency(lastEngineLatencyMs)})" else ""
-                        Text(
-                          text = context.getString(R.string.analysis_summary, winratePercent, "$leadSign$scoreLeadFormatted") + latencyText,
-                          style = MaterialTheme.typography.h6,
-                          fontWeight = FontWeight.ExtraBold,
-                          color = MaterialTheme.colors.primary
+                      AnalysisToggle(onAppBar = false)
+                    }
+                    // The status card and the buttons share the rest of the panel (scrollable when
+                    // the window is too short for them).
+                    BoxWithConstraints(
+                      modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                    ) {
+                      Column(
+                        modifier = Modifier
+                          .fillMaxWidth()
+                          .verticalScroll(rememberScrollState())
+                          .heightIn(min = maxHeight),
+                        verticalArrangement = Arrangement.SpaceEvenly,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                      ) {
+                        StatusCard()
+                        MoveButtons(Modifier.fillMaxWidth())
+                        GameButtons(
+                          Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
                         )
                       }
                     }
                   }
-
-                  if (isThinking) {
-                    LinearProgressIndicator(
-                      modifier = Modifier.fillMaxWidth().height(4.dp),
-                      color = MaterialTheme.colors.secondary
-                    )
-                  } else {
-                    Spacer(Modifier.height(4.dp))
-                  }
                 }
               }
-            }
-
-            // Board Container
-            Box(
-              modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-              contentAlignment = Alignment.Center
-            ) {
-              Box(
-                modifier = Modifier
-                  .aspectRatio(1f)
-                  .fillMaxWidth()
-                  .background(Color(0xFFFFCC66))
-              ) {
-                val boardMargin = 0.03f
-
-                Canvas(
+            } else {
+              Scaffold(
+                topBar = {
+                  TopAppBar(
+                    title = { AppTitle(onAppBar = true) },
+                    // The app bar extends behind the status bar; its content stays below it.
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                    backgroundColor = MaterialTheme.colors.primary,
+                    contentColor = MaterialTheme.colors.onPrimary,
+                    elevation = 4.dp,
+                    actions = { AnalysisToggle(onAppBar = true) }
+                  )
+                }
+              ) { paddingValues ->
+                Column(
                   modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(isEngineInitialized, isThinking) {
-                      if (!isEngineInitialized || isThinking) return@pointerInput
-                        detectTapGestures { offset ->
-                          val marginPx = size.width * boardMargin
-                        val gridSizePx = size.width - 2 * marginPx
-                        val stepPx = gridSizePx / (boardSize - 1)
-
-                        val x = ((offset.x - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
-                        val y = ((offset.y - marginPx) / stepPx).roundToInt().coerceIn(0, 18)
-
-                        // Only the player to move can pick a point, and not after the game ended.
-                        if (finalScoreText == null && isHumanColor(currentMode, currentTurn) && boardState[y][x] == Stone.EMPTY) {
-                          previewMove = x to y
-                        }
-                        }
-                    }
+                    .padding(paddingValues)
+                    .windowInsetsPadding(
+                      WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+                    ),
+                  horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                  val marginPx = size.width * boardMargin
-                  val gridSizePx = size.width - 2 * marginPx
-                  val stepPx = gridSizePx / (boardSize - 1)
-                  val stoneRadius = (stepPx / 2) * 0.98f
+                  StatusCard()
 
-                  // Draw Grid Lines
-                  val lineStart = marginPx
-                  val lineEnd = marginPx + (boardSize - 1) * stepPx
-
-                  for (i in 0 until boardSize) {
-                    val pos = marginPx + i * stepPx
-                    drawLine(
-                      color = Color.Black.copy(alpha = 0.8f),
-                      start = Offset(lineStart, pos),
-                      end = Offset(lineEnd, pos),
-                      strokeWidth = 1.dp.toPx()
-                    )
-                    drawLine(
-                      color = Color.Black.copy(alpha = 0.8f),
-                      start = Offset(pos, lineStart),
-                      end = Offset(pos, lineEnd),
-                      strokeWidth = 1.dp.toPx()
+                  // Board Container
+                  Box(
+                    modifier = Modifier
+                      .weight(1f)
+                      .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    GoBoard(
+                      Modifier
+                        .aspectRatio(1f)
+                        .fillMaxWidth()
                     )
                   }
 
-                  // Draw Hoshi
-                  val hoshiIndices = listOf(3, 9, 15)
-                  for (rowIdx in hoshiIndices) {
-                    for (colIdx in hoshiIndices) {
-                      drawCircle(
-                        color = Color.Black,
-                        radius = 3.dp.toPx(),
-                        center = Offset(marginPx + colIdx * stepPx, marginPx + rowIdx * stepPx)
-                      )
-                    }
-                  }
-
-                  if (showAnalysis || finalScoreText != null) {
-                    // Draw Ownership Dots/Squares (Territory Analysis)
-                    for (row in 0 until boardSize) {
-                      for (col in 0 until boardSize) {
-                        val score = analysis.ownership[row * boardSize + col]
-                        if (abs(score) > 0.1) {
-                          val centerX = marginPx + col * stepPx
-                          val centerY = marginPx + row * stepPx
-                          
-                          if (finalScoreText != null) {
-                            // Draw final territory as small squares
-                            val squareSize = stepPx * 0.45f
-                            drawRect(
-                              color = if (score > 0) Color.Black.copy(alpha = 0.5f) 
-                                      else Color.White.copy(alpha = 0.6f),
-                              topLeft = Offset(centerX - squareSize/2, centerY - squareSize/2),
-                              size = Size(squareSize, squareSize)
-                            )
-                          } else {
-                            // Normal analysis dots
-                            drawCircle(
-                              color = if (score > 0) Color.Black.copy(alpha = (score * 0.4).toFloat()) 
-                              else Color.White.copy(alpha = (-score * 0.4).toFloat()),
-                                radius = 3.dp.toPx(),
-                              center = Offset(centerX, centerY)
-                            )
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  // Draw Stones
-                  for (row in 0 until boardSize) {
-                    for (col in 0 until boardSize) {
-                      val stone = boardState[row][col]
-                      if (stone != Stone.EMPTY) {
-                        val centerX = marginPx + col * stepPx
-                        val centerY = marginPx + row * stepPx
-
-                        if (stone == Stone.BLACK) {
-                          drawCircle(
-                            brush = Brush.radialGradient(
-                              colors = listOf(Color(0xFF333333), Color.Black),
-                              center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                              radius = stoneRadius * 1.5f
-                            ),
-                            radius = stoneRadius,
-                            center = Offset(centerX, centerY)
-                          )
-                        } else {
-                          drawCircle(
-                            brush = Brush.radialGradient(
-                              colors = listOf(Color.White, Color(0xFFDDDDDD)),
-                              center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                              radius = stoneRadius * 1.5f
-                            ),
-                            radius = stoneRadius,
-                            center = Offset(centerX, centerY)
-                          )
-                          drawCircle(
-                            color = Color.Black.copy(alpha = 0.1f),
-                            radius = stoneRadius,
-                            center = Offset(centerX, centerY),
-                            style = Stroke(width = 0.5.dp.toPx())
-                          )
-                        }
-
-                        // Mark Last Move
-                        if (lastMove?.first == col && lastMove?.second == row) {
-                          drawCircle(
-                            color = if (stone == Stone.BLACK) Color.White else Color.Black,
-                            radius = 4.dp.toPx(),
-                            center = Offset(centerX, centerY)
-                          )
-                        }
-                      }
-                    }
-                  }
-
-                  if (showAnalysis && finalScoreText == null) {
-                    // Draw Candidate Moves (Suggestions)
-                    val bestMove = analysis.candidates.maxByOrNull { it.visits }
-
-                    analysis.candidates.forEach { candidate ->
-                      val centerX = marginPx + candidate.x * stepPx
-                      val centerY = marginPx + candidate.y * stepPx
-                      val candidateRadius = stoneRadius * 0.75f // 75% of stone size
-
-                      if (candidate == bestMove) {
-                        // Highlight best move with a dark red ring
-                        drawCircle(
-                          color = Color(0xFFB71C1C), // Dark Red
-                          radius = stoneRadius * 0.9f,
-                          center = Offset(centerX, centerY),
-                          style = Stroke(width = 3.dp.toPx())
-                        )
-                      } else {
-                        // Other candidates as solid light red dots
-                        drawCircle(
-                          color = Color(0xFFE57373), // Light Red
-                          radius = candidateRadius,
-                          center = Offset(centerX, centerY)
-                        )
-                      }
-
-                      // Display candidate move winrate from the perspective of the player whose turn it is
-                      val displayedWinrate = if (currentTurn == Stone.WHITE) 1.0 - candidate.winrate else candidate.winrate
-                      val winratePercent = (displayedWinrate * 100).toInt().coerceIn(0, 100)
-                      val winrateText = "$winratePercent%"
-                      val textPaint = android.graphics.Paint().apply {
-                        color = if (candidate == bestMove) android.graphics.Color.parseColor("#B71C1C")
-                        else android.graphics.Color.WHITE
-                        textSize = 9.dp.toPx()
-                        textAlign = android.graphics.Paint.Align.CENTER
-                        isAntiAlias = true
-                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                      }
-                      drawIntoCanvas { canvas ->
-                        canvas.nativeCanvas.drawText(
-                          winrateText,
-                          centerX,
-                          centerY + 3.5f.dp.toPx(),
-                          textPaint
-                        )
-                      }
-                    }
-                  }                       // Draw Preview Stone (Ghost Stone)
-                  previewMove?.let { (px, py) ->
-                    val centerX = marginPx + px * stepPx
-                    val centerY = marginPx + py * stepPx
-                    
-                    if (currentTurn == Stone.BLACK) {
-                      drawCircle(
-                        brush = Brush.radialGradient(
-                          colors = listOf(Color(0xFF333333).copy(alpha = 0.6f), Color.Black.copy(alpha = 0.6f)),
-                          center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                          radius = stoneRadius * 1.5f
-                        ),
-                        radius = stoneRadius,
-                        center = Offset(centerX, centerY)
-                      )
-                      drawCircle(
-                        color = Color.Black.copy(alpha = 0.15f),
-                        radius = stoneRadius,
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 0.5.dp.toPx())
-                      )
-                      
-                      // Draw a solid white triangle in the center of the black preview stone
-                      val path = androidx.compose.ui.graphics.Path().apply {
-                        val size = 6.dp.toPx()
-                        moveTo(centerX, centerY - size)
-                        lineTo(centerX - size, centerY + size * 0.7f)
-                        lineTo(centerX + size, centerY + size * 0.7f)
-                        close()
-                      }
-                      drawPath(path = path, color = Color.White.copy(alpha = 0.8f))
-                    } else {
-                      drawCircle(
-                        brush = Brush.radialGradient(
-                          colors = listOf(Color.White.copy(alpha = 0.65f), Color(0xFFDDDDDD).copy(alpha = 0.65f)),
-                          center = Offset(centerX - stoneRadius * 0.3f, centerY - stoneRadius * 0.3f),
-                          radius = stoneRadius * 1.5f
-                        ),
-                        radius = stoneRadius,
-                        center = Offset(centerX, centerY)
-                      )
-                      drawCircle(
-                        color = Color.Black.copy(alpha = 0.15f),
-                        radius = stoneRadius,
-                        center = Offset(centerX, centerY),
-                        style = Stroke(width = 0.5.dp.toPx())
-                      )
-                      
-                      // Draw a solid black triangle in the center of the white preview stone
-                      val path = androidx.compose.ui.graphics.Path().apply {
-                        val size = 6.dp.toPx()
-                        moveTo(centerX, centerY - size)
-                        lineTo(centerX - size, centerY + size * 0.7f)
-                        lineTo(centerX + size, centerY + size * 0.7f)
-                        close()
-                      }
-                      drawPath(path = path, color = Color.Black.copy(alpha = 0.8f))
-                    }
-                  }
-                }
-              }
-            }
-
-            // --- Top Row: Place / Pass / Auto Button ---
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-              horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              if (currentMode == GameMode.AI_BOTH) {
-                // Autoplay Toggle (Auto / Pause)
-                Button(
-                  onClick = {
-                    val willPlay = !aiAutoPlay
-                    aiAutoPlay = willPlay
-                    if (willPlay && !isThinking && finalScoreText == null) {
-                      scope.launch { handleAiMove(currentTurn) }
-                    }
-                  },
-                  modifier = Modifier.height(56.dp).width(120.dp),
-                  shape = RoundedCornerShape(28.dp),
-                  colors = ButtonDefaults.buttonColors(
-                    backgroundColor = if (aiAutoPlay) Color(0xFFE53935) else Color(0xFF43A047)
-                  ),
-                  elevation = ButtonDefaults.elevation(6.dp)
-                ) {
-                  Text(
-                    text = if (aiAutoPlay) context.getString(R.string.btn_pause) else context.getString(R.string.btn_auto),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
+                  MoveButtons(
+                    Modifier
+                      .fillMaxWidth()
+                      .padding(top = 16.dp)
                   )
-                }
-
-                // Step Button (Execute single AI move when paused)
-                Button(
-                  onClick = {
-                    if (!isThinking && finalScoreText == null) {
-                      scope.launch { handleAiMove(currentTurn) }
-                    }
-                  },
-                  enabled = !aiAutoPlay && !isThinking && finalScoreText == null,
-                  modifier = Modifier.height(56.dp).width(110.dp),
-                  shape = RoundedCornerShape(28.dp),
-                  colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Color.LightGray.copy(alpha = 0.5f)
-                  ),
-                  elevation = ButtonDefaults.elevation(4.dp)
-                ) {
-                  Text(context.getString(R.string.btn_step), fontWeight = FontWeight.Bold)
-                }
-              } else {
-                // Pass Button
-                Button(
-                  onClick = {
-                    scope.launch {
-                        val turnColor = currentTurn
-                        val resp = withContext(Dispatchers.IO) {
-                          bridge.sendGtpCommand("play ${gtpColor(turnColor)} pass")
-                        }
-                        if (!resp.startsWith("=")) {
-                          onStatusTextChange("Pass failed: $resp")
-                          return@launch
-                        }
-                        playPassSound()
-                        // Record the pass (and drop any redo moves) so undo/redo and saved-game
-                        // restore keep colors in sync with the engine.
-                        val newHistory = moveHistory.take(historyIndex + 1) + "pass"
-                        val newIndex = historyIndex + 1
-                        moveHistory = newHistory
-                        historyIndex = newIndex
-                        lastMove = null
-                        previewMove = null
-                        val newPasses = consecutivePasses + 1
-                        consecutivePasses = newPasses
-                        lastMoveText = context.getString(R.string.last_move_passed, colorLabel(turnColor))
-                        val nextTurn = opponent(turnColor)
-                        currentTurn = nextTurn
-                        
-                        checkGameEnd()
-                        saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, passes = newPasses)
- 
-                        if (finalScoreText == null) {
-                            if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
-                                handleAiMove(Stone.WHITE)
-                            } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
-                                handleAiMove(Stone.BLACK)
-                            }
-                        }
-                    }
-                  },
-                  enabled = !isThinking && finalScoreText == null && (
-                    currentMode == GameMode.USER_BOTH ||
-                    (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
-                    (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
-                  ),
-                  modifier = Modifier.height(56.dp).width(80.dp),
-                  shape = RoundedCornerShape(28.dp),
-                  colors = ButtonDefaults.buttonColors(
-                    backgroundColor = Color.LightGray.copy(alpha = 0.5f)
+                  GameButtons(
+                    Modifier
+                      .padding(16.dp)
+                      .fillMaxWidth()
                   )
-                ) {
-                  Text(context.getString(R.string.btn_pass), fontWeight = FontWeight.Bold)
-                }
- 
-                // Place Button (Circular)
-                Button(
-                  onClick = {
-                    val move = previewMove ?: return@Button
-                    val (x, y) = move
-                    val turnColor = currentTurn
-                    scope.launch {
-                      playMove(x, y, turnColor, bridge) { success, moveStr ->
-                        if (success) {
-                          boardState = syncBoardState(bridge)
-                          lastMoveText = context.getString(R.string.last_move_played, colorLabel(turnColor), moveStr)
-                          val newHistory = moveHistory.take(historyIndex + 1) + moveStr
-                          val newIndex = historyIndex + 1
-                          moveHistory = newHistory
-                          historyIndex = newIndex
-                          consecutivePasses = 0
-                          previewMove = null
-                          lastMove = x to y
-                          playMoveSound()
-                          val nextTurn = if (turnColor == Stone.BLACK) Stone.WHITE else Stone.BLACK
-                          currentTurn = nextTurn
 
-                          saveGameState(history = newHistory, idx = newIndex, turn = nextTurn, score = finalScoreText, passes = 0)
-
-                          if (currentMode == GameMode.USER_BLACK && currentTurn == Stone.WHITE) {
-                            scope.launch { handleAiMove(Stone.WHITE) }
-                          } else if (currentMode == GameMode.USER_WHITE && currentTurn == Stone.BLACK) {
-                            scope.launch { handleAiMove(Stone.BLACK) }
-                          } else {
-                            onStatusTextChange("Turn.")
-                          }
-                        } else {
-                          // Ko, suicide or an occupied point: the engine refused the move.
-                          Log.i("GameFragment", "Illegal move refused: ${gtpColor(turnColor)} $moveStr")
-                          android.widget.Toast.makeText(context, R.string.msg_illegal_move, android.widget.Toast.LENGTH_SHORT).show()
-                          boardState = syncBoardState(bridge)
-                          previewMove = null
-                        }
-                      }
-                    }
-                  },
-                  enabled = previewMove != null && !isThinking && finalScoreText == null && (
-                    currentMode == GameMode.USER_BOTH ||
-                    (currentMode == GameMode.USER_BLACK && currentTurn == Stone.BLACK) ||
-                    (currentMode == GameMode.USER_WHITE && currentTurn == Stone.WHITE)
-                  ),
-                  modifier = Modifier.size(80.dp),
-                  shape = CircleShape,
-                  // The default 16dp side padding leaves only 48dp for the label in an 80dp circle,
-                  // which wrapped "PLACE" mid-word. Use nearly the full width and keep it on one line.
-                  contentPadding = PaddingValues(horizontal = 4.dp),
-                  elevation = ButtonDefaults.elevation(defaultElevation = 6.dp, pressedElevation = 12.dp)
-                ) {
-                  Text(context.getString(R.string.btn_place), fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                  Spacer(modifier = Modifier.height(32.dp))
                 }
               }
             }
- 
-            // --- Bottom Row: Undo - New Game - Redo ---
-            Row(
-              modifier = Modifier.padding(16.dp).fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              // Undo Button
-              val undoCount = movesToUndo(currentMode, historyIndex, handicap)
-              IconButton(
-                onClick = {
-                  val count = movesToUndo(currentMode, historyIndex, handicap)
-                  if (count > 0 && !isThinking) {
-                    scope.launch {
-                      onThinkingChange(true)
-                      // movesToUndo never reaches into the handicap setup. Against the AI it also takes
-                      // back the AI's reply, so it is your turn again.
-                      var undone = 0
-                      while (undone < count) {
-                        val resp = withContext(Dispatchers.IO) { bridge.sendGtpCommand("undo") }
-                        if (!resp.startsWith("=")) {
-                          Log.w("GameFragment", "undo failed: $resp")
-                          break
-                        }
-                        undone++
-                      }
-                      val newIndex = historyIndex - undone
-                      historyIndex = newIndex
-                      currentTurn = sideToMove(newIndex, handicap)
-                      boardState = syncBoardState(bridge)
-                      lastMove = lastPlayedPoint(moveHistory, newIndex, handicap)
-                      lastMoveText = if (newIndex >= handicapStoneCount(handicap)) {
-                        context.getString(R.string.last_move_undone, moveHistory[newIndex])
-                      } else {
-                        context.getString(R.string.last_move_undone_start)
-                      }
-                      previewMove = null
-                      consecutivePasses = trailingPasses(moveHistory, newIndex, handicap)
-                      // Taking back a move after the game ended resumes play.
-                      finalScoreText = null
-                      showGameOverDialog = false
-                      saveGameState(idx = newIndex, turn = currentTurn, score = null, passes = consecutivePasses)
-                      onThinkingChange(false)
-                    }
-                  }
-                },
-                enabled = undoCount > 0 && !isThinking,
-                modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
-              ) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", tint = MaterialTheme.colors.primary)
-              }
- 
-              // New Game Button
-              Button(
-                onClick = {
-                  // Pause AI-vs-AI autoplay so no engine move races with setting up a new game.
-                  aiAutoPlay = false
-                  showSettings = true
-                },
-                // Starting a new game while the AI is still searching would mix the old game's AI
-                // move into the new game.
-                enabled = !isThinking,
-                modifier = Modifier.height(56.dp).width(140.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                  backgroundColor = MaterialTheme.colors.secondary,
-                  contentColor = MaterialTheme.colors.onSecondary
-                ),
-                elevation = ButtonDefaults.elevation(4.dp)
-              ) {
-                Text(context.getString(R.string.btn_new_game), fontWeight = FontWeight.Bold)
-              }
-
-              // Redo Button (off in AI vs AI, like Undo)
-              IconButton(
-                onClick = {
-                  if (historyIndex < moveHistory.size - 1 && !isThinking && currentMode != GameMode.AI_BOTH) {
-                    scope.launch {
-                      onThinkingChange(true)
-                      // Against the AI, redo the player's move together with the AI's reply.
-                      while (historyIndex < moveHistory.size - 1) {
-                        val moveStr = moveHistory[historyIndex + 1]
-                        val resp = withContext(Dispatchers.IO) {
-                          bridge.sendGtpCommand("play ${gtpColor(currentTurn)} $moveStr")
-                        }
-                        if (!resp.startsWith("=")) {
-                          Log.w("GameFragment", "redo of $moveStr failed: $resp")
-                          break
-                        }
-                        historyIndex += 1
-                        currentTurn = opponent(currentTurn)
-                        if (!isUserVsAi(currentMode) || !isAiTurn(currentMode, currentTurn)) break
-                      }
-                      boardState = syncBoardState(bridge)
-                      val newIndex = historyIndex
-                      lastMove = lastPlayedPoint(moveHistory, newIndex, handicap)
-                      lastMoveText = context.getString(R.string.last_move_redone, moveHistory.getOrNull(newIndex) ?: "")
-                      previewMove = null
-                      consecutivePasses = trailingPasses(moveHistory, newIndex, handicap)
-                      saveGameState(idx = newIndex, turn = currentTurn, passes = consecutivePasses)
-                      onThinkingChange(false)
-                      if (consecutivePasses >= 2) {
-                        checkGameEnd()
-                      } else if (isUserVsAi(currentMode) && isAiTurn(currentMode, currentTurn)) {
-                        // The redo history ended on the AI's turn: let it move.
-                        handleAiMove(currentTurn)
-                      }
-                    }
-                  }
-                },
-                enabled = historyIndex < moveHistory.size - 1 && !isThinking && currentMode != GameMode.AI_BOTH,
-                modifier = Modifier.background(MaterialTheme.colors.surface, CircleShape).size(48.dp)
-              ) {
-                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo", tint = MaterialTheme.colors.primary)
-              }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
           }
 
           if (showSettings) {
@@ -1505,7 +1657,9 @@ class GameFragment : Fragment() {
                 elevation = 12.dp,
                 modifier = Modifier
                   .fillMaxWidth()
-                  .fillMaxHeight(0.85f)
+                  // Nearly the full height in short windows (phones in landscape), so more of the
+                  // settings show above the fixed footer.
+                  .fillMaxHeight(if (LocalConfiguration.current.screenHeightDp < 520) 0.95f else 0.85f)
               ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                   Column(

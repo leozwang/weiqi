@@ -21,6 +21,12 @@ The iOS app (`weiqi-ios`) has the same game rules and its own test suite. [ios_t
    bazel build -c opt --config=android_arm64-v8a //src:release && adb install -r bazel-bin/src/release.apk && adb shell am start -n com.cwave.weiqi/com.cwave.weiqi.MainActivity
    adb shell dumpsys package com.cwave.weiqi | grep -E "versionCode|versionName"
    ```
+4. **Check the release build itself (B1)** for the Play Console's pre-review warnings: R8 obfuscation ("DEX code optimization"), deprecated edge-to-edge APIs, and orientation or resizability restrictions. Build the bundle too, so B1 also checks the file you upload:
+   ```bash
+   bazel build -c opt --config=android_arm64-v8a //src:release //src:release_bundle
+   python3 tools/release_tests.py --out /tmp/release-b1 b1      # no phone needed
+   ```
+5. **Keep the R8 mapping files** of the build you upload (`bazel-bin/src/app_bundle_base_proguard.map` for `release.aab`, `bazel-bin/src/app_proguard.map` for `release.apk`), and upload the bundle's mapping file to Play Console with the release (see [README](../README.md#release-build-r8-and-the-mapping-file)). Without it, crash reports from that release can't be read.
 
 ## 2. Test devices and engine log
 
@@ -68,7 +74,17 @@ adb logcat -v time | grep -E "KataGoBridge|KataGoBackend|GameFragment|OpenCL"
 | T17 | Settings | Clean install; then start games with several mode, handicap and level combinations, force-stop and relaunch after each | First launch opens New Game on Amateur, no handicap, You are Black. After each relaunch the engine gets the saved visits, komi and handicap, and New Game shows the saved choices. |
 | T18 | Languages | Set the app language to Japanese, then Simplified Chinese (Settings > System > Languages > App languages, or `adb shell cmd locale set-app-locales com.cwave.weiqi --locales ja-JP`); open New Game with handicap 2 as Black; end a Two Players game with two passes | The New Game dialog, the handicap line and the result dialog are fully translated (no CANCEL, START, PLAY AS, Game Over or BACK TO BOARD in English). Reset the app language afterwards. |
 | T19 | Turn order | Whole run | The app never sends a move or search for the wrong color: every `AI play` has `color` = `rootPla`, and no `Refused: not … turn` appears. |
+| T20 | Rotation, large screens and re-creation | The app has no orientation lock. Mid-game (Two Players), turn the phone to landscape, play a move there, open New Game, turn to reverse landscape and back to portrait. Turn the phone while the AI is thinking. Then simulate a tablet (`adb shell wm size 1600x2560 && adb shell wm density 320`, 800×1280 dp) in both orientations, and reset (`wm size reset`, `wm density reset`). Finally switch dark mode on and off (`adb shell cmd uimode night yes`, then back) | The app turns with the phone. Landscape (and any wide window) uses the side-by-side layout: the board at full height on the left, the title, ANALYSIS, status card and buttons beside it; portrait uses the stacked layout. Turning never restarts the app or the engine (log: no new `Starting KataGo Engine Init`): the game, the move being previewed and an AI search in progress carry on. Taps on the board land on the right point in landscape. The New Game dialog fits (START and CANCEL on screen). On the simulated tablet the board is at least 700 dp in portrait; landscape is side by side. A density change or a dark-mode switch re-creates the activity: the game must come back on screen unchanged (before 3.7 the screen stayed blank). Log: `Layout: stacked …` or `Layout: side-by-side …`. |
+| T21 | Edge to edge | Look at the game screen in portrait and landscape (Android 15+ always draws apps behind the system bars) | The app's purple fills the status bar (white icons on it); the app's light background shows behind the navigation bar (dark buttons on it). No text, button or part of the board is under the status bar, the navigation bar or the camera cutout. |
 | U1 | Update from the previous release (optional) | Install the previous release, start a handicap game and play a move, then install this build over it | The saved game comes back unchanged and nothing is refused during the replay. Run when the saved-game format or the handicap rules changed. |
+
+### Release build checks
+
+Checked on the computer, from the built files (no phone). These are what the Play Console reviews when a bundle is uploaded.
+
+| # | Area | Steps | Expected |
+|---|---|---|---|
+| B1 | Release build | `python3 tools/release_tests.py --out /tmp/release-b1 b1` after building `//src:release` and `//src:release_bundle` | The manifest has no `screenOrientation`, no aspect-ratio limit and no `resizeableActivity="false"`, and targets SDK 35+. The code went through R8 in release mode and most classes are renamed (obfuscated; Play warns below 25%), except `MainActivity`, `WeiqiApplication` and the two JNI bridges, which keep their names and their native methods' names. The mapping file's `pg-map-id` matches the APK's (and the bundle's). No Material Components classes are left (they called the deprecated `Window.setStatusBarColor` and `setNavigationBarColor`); the only callers of those APIs are androidx's `enableEdgeToEdge()` (`androidx.activity.EdgeToEdgeApi*`). |
 
 ### Manual checks
 
@@ -81,6 +97,7 @@ These need a person to look or listen. Do them on one phone per release, with th
 | M3 | Result display | After two passes, the territory marks and the result look right for the position (Chinese count: stones + territory, minus komi). |
 | M4 | Sound | A stone sound plays for every move, a short tone for every pass. |
 | M5 | Languages | Look through the T18 screenshots (`t18_*.png`) and the main screen in Japanese and Chinese: no clipped or overlapping text. |
+| M6 | Landscape, tablet and foldable look | Look through the T20 and T21 screenshots (`t20_*.png`, `t21_*.png`). On a foldable, fold and unfold during a game (Flip 8: switch between the cover and main screens); on any phone, put the app in split screen and resize it | Nothing clipped or overlapping; the board stays square and fully visible; the game carries on through folding and resizing without a restart. |
 
 ## 4. Premium and payment tests
 
@@ -108,24 +125,26 @@ adb logcat -v time | grep BillingManager
 
 ## 5. Automated run
 
-`tools/release_tests.py` drives a connected phone over adb. It taps UI elements by their text (via `uiautomator`), reads the board from screenshots, and checks the engine and billing log.
+`tools/release_tests.py` drives a connected phone over adb. It taps UI elements by their text (via `uiautomator`), reads the board from screenshots, and checks the engine and billing log. Step `b1` checks the built APK and AAB on the computer and needs no phone.
 
-**Requirements:** `adb`, Python 3 with `numpy` and `Pillow`, and `ffmpeg` (for T1). Install the build under test first (see [Pre-release checks](#1-pre-release-checks)). Keep the phone unlocked with the screen on, and don't touch it while the runner works; a full pass takes about an hour. The runner raises the phone's log buffer to 16 MB (`adb logcat -G 16M`) so a whole step's engine log is kept. On a Mac it runs itself under `caffeinate -i`, because a sleeping Mac pauses the run.
+**Requirements:** `adb`, Python 3 with `numpy` and `Pillow`, `ffmpeg` (for T1), and the Android SDK build-tools with `aapt2` and `dexdump` (for B1, found through `$ANDROID_HOME`). Build `//src:release` and `//src:release_bundle` and install the APK first (see [Pre-release checks](#1-pre-release-checks)). Keep the phone unlocked with the screen on, and don't touch it while the runner works; a full pass takes about an hour and a half. **The phone must not be in use by anything else** (another app being installed or launched over adb takes the screen away from the runner). The runner raises the phone's log buffer to 16 MB (`adb logcat -G 16M`) so a whole step's engine log is kept. The app follows the phone's rotation, so the runner pins portrait (T20 and T21 turn the screen themselves) and restores the phone's rotation settings when it ends. On a Mac it runs itself under `caffeinate -i`, because a sleeping Mac pauses the run.
 
 ```bash
-python3 tools/release_tests.py --out /tmp/release-3.6            # every step; premium state auto-detected
-python3 tools/release_tests.py --out /tmp/release-3.6 t1 t2      # selected steps only
+python3 tools/release_tests.py --out /tmp/release-3.7            # every step; premium state auto-detected
+python3 tools/release_tests.py --out /tmp/release-3.7 t1 t2      # selected steps only
+python3 tools/release_tests.py --out /tmp/release-3.7-b1 b1      # the build check alone (no phone)
 python3 tools/release_tests.py --list                            # list steps and the cases they cover
 ```
 
 Run it once on the release build (premium off: covers P1–P4). Then run it once more on a local build with the premium bypass (premium on), at least steps `t3 t12 t13 t17`: `t3` covers P10, and `t12`, `t13` and `t17` only exercise Advanced and Pro when premium is on. Use `--serial` to pick a phone when several are connected.
 
 ```bash
-python3 tools/release_tests.py --out /tmp/release-3.6-premium t3 t12 t13 t17   # premium-on build
+python3 tools/release_tests.py --out /tmp/release-3.7-premium t3 t12 t13 t17   # premium-on build
 ```
 
 | Step | Covers | Notes |
 |---|---|---|
+| `b1` | B1 | On the computer: reads `bazel-bin/src/release.apk` (`--apk`), its mapping file `app_proguard.map` (`--mapping`) and `release.aab`. |
 | `t1` | T1 | **Clears the app's data** to force tuning; records the screen and scans every frame for black blocks and dark triangles. Launch-animation frames can be flagged; watch the saved recording to confirm. |
 | `t2` | T2 | |
 | `t3` | T3, P1–P4 (premium off) or P10 (premium on) | Opens the Play purchase sheet and only closes it; it never buys. Turns on airplane mode briefly for P4, then restores Wi-Fi and mobile data. |
@@ -142,12 +161,14 @@ python3 tools/release_tests.py --out /tmp/release-3.6-premium t3 t12 t13 t17   #
 | `t16` | T16 | |
 | `t17` | T17 | The first-launch part runs in `t1` (after the clean install). |
 | `t18` | T18 | Changes the app language and restores it at the end. Needs Android 13 or later. |
+| `t20` | T20 | Turns the screen (landscape, reverse landscape, back), simulates an 800×1280 dp tablet with `wm size` / `wm density`, and switches dark mode on and off; always restores all three at the end. |
+| `t21` | T21 | Compares the status and navigation bar areas of the screenshot with the bars' positions from `dumpsys window`. |
 | (all) | T19 | Checked over every step that ran. |
 | `upgrade` | U1 | Optional, not part of a default run: `--previous-apk old.apk`. **Uninstalls the app** first. |
 
 **Output** goes to the `--out` folder: `summary.md` (a results table for the release notes), `results.json`, screenshots, the T1 recordings, and `actions.log` (every tap and swipe with a timestamp). The exit code is non-zero if any check fails.
 
-**Not automated:** P5–P9 (they need a license tester account and the internal testing track), the manual checks M1–M5, watching the T1 recording when frames are flagged, and testing on the second device.
+**Not automated:** P5–P9 (they need a license tester account and the internal testing track), the manual checks M1–M6, watching the T1 recording when frames are flagged, and testing on the second device.
 
 ## 6. Recording results
 
@@ -155,8 +176,8 @@ Add a table like this to the release notes or the PR, one column per device and 
 
 | Case | Pixel 11 Pro XL (premium off) | Galaxy Z Flip 8 (premium off) | … |
 |---|---|---|---|
-| Pre-release checks | Pass | Pass | |
-| T1–T19 | Pass | Pass | |
-| M1–M5 | Pass | | |
+| Pre-release checks, B1 | Pass | Pass | |
+| T1–T21 | Pass | Pass | |
+| M1–M6 | Pass | | |
 | P1–P4, P10 | Pass | Pass | |
 | P5–P9 | Pass / not required | | |

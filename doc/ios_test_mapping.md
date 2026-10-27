@@ -136,3 +136,14 @@ iOS runs these against a local StoreKit test session. Google Play has no local e
 - The first launch opens New Game (iOS starts a game with the default settings right away).
 - The app version is not shown in the app.
 - No Restore Purchases button (Play restores purchases by itself) and no sound or haptics settings.
+- The Android app turns with the phone and has a side-by-side layout for landscape and large screens (Google Play asks games not to restrict orientation or resizing). The iOS app is portrait only and hides the status bar.
+
+## Android-only cases
+
+These come from Google Play and Android requirements and have no iOS counterpart:
+
+| Android case | Why |
+|---|---|
+| B1 Release build | Play Console's checks of an uploaded bundle: R8 obfuscation ("DEX code optimization"), deprecated edge-to-edge APIs, orientation and resizability restrictions, mapping file for crash reports |
+| T20 Rotation and large screens | No orientation lock; tablets, foldables and resizable windows |
+| T21 Edge to edge | Android 15+ draws apps behind the system bars |

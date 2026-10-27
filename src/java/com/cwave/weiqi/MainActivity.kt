@@ -1,18 +1,15 @@
 package com.cwave.weiqi
 
+import android.graphics.Color
 import android.os.Bundle
 import android.view.View
-import android.view.ViewGroup.MarginLayoutParams
 import android.view.WindowManager.LayoutParams
 import android.widget.FrameLayout
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.FragmentContainerView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.google.android.material.color.DynamicColors
 
 class MainActivity : AppCompatActivity() {
   private lateinit var container: FrameLayout
@@ -21,13 +18,18 @@ class MainActivity : AppCompatActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     installSplashScreen()
     super.onCreate(savedInstanceState)
-    DynamicColors.applyToActivityIfAvailable(this)
-    WindowCompat.setDecorFitsSystemWindows(window, false)
+    // Edge to edge on every Android version (Android 15+ always draws apps that target SDK 35+ this
+    // way): the window extends behind the status and navigation bars, and GameFragment keeps its
+    // content clear of the system bars and display cutout. The status bar lies on the purple app
+    // bar (light icons); the navigation bar on the light background (dark icons).
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+    )
 
     window.addFlags(LayoutParams.FLAG_KEEP_SCREEN_ON)
 
     setContentView(createView())
-    setLayoutEdgeToEdge()
 
     if (savedInstanceState == null) {
       supportFragmentManager
@@ -47,7 +49,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fragmentContainer = FragmentContainerView(this).apply {
-      id = View.generateViewId()
+      // A fixed id, not View.generateViewId(): when the activity is re-created, the restored
+      // GameFragment goes back into the container with the id it was added to. With a new id it
+      // stayed detached and the screen was blank.
+      id = R.id.fragment_container
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT
@@ -56,22 +61,5 @@ class MainActivity : AppCompatActivity() {
 
     container.addView(fragmentContainer)
     return container
-  }
-
-  private fun setLayoutEdgeToEdge() {
-    ViewCompat.setOnApplyWindowInsetsListener(container) { view, windowInsets ->
-      val insets = windowInsets.getInsets(
-        WindowInsetsCompat.Type.navigationBars() or
-        WindowInsetsCompat.Type.statusBars() or
-        WindowInsetsCompat.Type.displayCutout()
-      )
-      view.updateLayoutParams<MarginLayoutParams> {
-        leftMargin = insets.left
-        rightMargin = insets.right
-        topMargin = insets.top
-        bottomMargin = insets.bottom
-      }
-      WindowInsetsCompat.CONSUMED
-    }
   }
 }

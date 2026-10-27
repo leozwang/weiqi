@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MainActivity's fragment container. The id must be the same every time the activity is
+         created: when Android re-creates the activity (dark mode, display size, density or language
+         changes, moving between a foldable's screens, or the process restarting), the FragmentManager
+         puts the restored GameFragment back into the container with the id it was added to. -->
+    <item name="fragment_container" type="id" />
+</resources>

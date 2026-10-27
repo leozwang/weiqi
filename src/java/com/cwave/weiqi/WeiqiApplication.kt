@@ -2,7 +2,6 @@ package com.cwave.weiqi
 
 import android.app.Application
 import android.util.Log
-import com.google.android.material.color.DynamicColors
 import java.io.File
 
 class WeiqiApplication : Application() {
@@ -30,7 +29,6 @@ class WeiqiApplication : Application() {
 
   override fun onCreate() {
     super.onCreate()
-    DynamicColors.applyToActivitiesIfAvailable(this)
     copySystemOpenCL()
   }
 

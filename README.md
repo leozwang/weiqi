@@ -19,9 +19,21 @@ To launch the application:
 adb shell am start -n com.cwave.weiqi/com.cwave.weiqi.MainActivity
 ```
 
+### Release build: R8 and the mapping file
+
+The release builds (`//src:app`, `//src:release`, `//src:app_bundle`, `//src:release_bundle`) run R8, which shrinks, optimizes and obfuscates the code (Play Console: "DEX code optimization"). The app's keep rules are in [src/proguard-rules.pro](src/proguard-rules.pro); libraries bring their own. Anything the native engine or the system finds by name must be kept there: today that is the JNI bridges `KataGoBridge` and `KataGoBridgeEigen` (`libkatago_jni.so` exports `Java_com_cwave_weiqi_katago_KataGoBridge_*`).
+
+R8 writes a mapping file that turns obfuscated stack traces back into readable ones:
+- `release.aab` carries it inside (`BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map`), so Play Console de-obfuscates crashes and ANRs of an uploaded bundle by itself. This needs the rules_android patch in [third_party/rules_android](third_party/rules_android) (see `MODULE.bazel`).
+- For `release.apk` it is `bazel-bin/src/app_proguard.map`. Keep it with any APK you hand out, and upload it in Play Console (App bundle explorer > the version > Downloads > ReTrace mapping file) if you ever upload an APK.
+
+To read a stack trace from a bug report by hand: `$ANDROID_HOME/cmdline-tools/latest/bin/retrace bazel-bin/src/app_proguard.map stacktrace.txt` (use the mapping file of the same build).
+
+The app has no orientation lock and draws edge to edge (behind the status and navigation bars, as Android 15+ requires for apps targeting SDK 35+). `GameFragment` picks a stacked layout (portrait) or a side-by-side one (landscape, large screens, wide windows), whichever gives the bigger board, and keeps its content clear of the system bars and the camera cutout. `MainActivity` handles rotation and resizing itself (`android:configChanges` in the manifest), so turning or folding the phone doesn't restart the game or the engine.
+
 ## Release Testing
 
-Before every release, run the full test pass in [doc/test_plan.md](doc/test_plan.md): pre-release checks, test cases T1–T19, the manual checks M1–M5, and the premium and payment tests P1–P10. Most of it is automated:
+Before every release, run the full test pass in [doc/test_plan.md](doc/test_plan.md): pre-release checks, the release build check B1, test cases T1–T21, the manual checks M1–M6, and the premium and payment tests P1–P10. Most of it is automated:
 ```bash
 python3 tools/release_tests.py --out /tmp/weiqi-release-test
 ```
